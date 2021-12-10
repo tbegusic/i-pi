@@ -3,8 +3,9 @@
 Deals with the normal mode transformation, including the complications
 introduced by PA-CMD when the bead masses are rescaled. Also deals with
 the change in the dynamics introduced by this mass-scaling, and has its
-own functions to calculate the kinetic energy, and the exact propagator
-in the normal mode representation under the ring polymer Hamiltonian.
+own functions to calculate the kinetic energy, and the exact as well as
+Cayley-modified propagators in the normal mode representation under the
+ring polymer Hamiltonian.
 """
 
 # This file is part of i-PI.
@@ -57,10 +58,11 @@ class NormalModes(dobject):
        omegan2: omegan**2.
        omegak: The normal mode frequencies for the free ring polymer.
           Depends on omegan.
-       prop_pq: An array holding the exact normal mode propagator for the
-          free ring polymer, using mass scaled coordinates.
-          See J. Chem. Phys. 133, 124101 (2010). Depends on the bead masses
-          and the timestep.
+       prop_pq: An array holding the exact or Cayley-modified normal mode propagator
+          for the free ring polymer, using mass scaled coordinates.
+          See J. Chem. Phys. 133, 124101 (2010) for the details on mass scaled
+          coordinates. See J. Chem. Phys. 151, 124103 (2019) and J.Chem. Phys.
+          152, 104102 (2020) for the details on Cayley modification.
        nm_factor: An array of dynamical mass factors associated with each of
           the normal modes. Depends on nm_freqs and mode.
        dynm3: An array that gives the dynamical masses of individual atoms in the
@@ -306,11 +308,19 @@ class NormalModes(dobject):
 
         dself.dt = depend_value(name="dt", value=1.0)
         dpipe(dd(self.motion).dt, dself.dt)
+        dself.splitting = depend_value(name="splitting", value="obabo")
+        dpipe(dd(self.motion).splitting, dself.splitting)
         dself.prop_pq = depend_array(
             name="prop_pq",
             value=np.zeros((self.beads.nbeads, 2, 2)),
             func=self.get_prop_pq,
-            dependencies=[dself.omegak, dself.nm_factor, dself.dt, dself.propagator],
+            dependencies=[
+                dself.omegak,
+                dself.nm_factor,
+                dself.dt,
+                dself.propagator,
+                dself.splitting,
+            ],
         )
         dself.o_prop_pq = depend_array(
             name="o_prop_pq",
@@ -321,6 +331,7 @@ class NormalModes(dobject):
                 dself.o_nm_factor,
                 dself.dt,
                 dself.propagator,
+                dself.splitting,
             ],
         )
 
@@ -500,13 +511,24 @@ class NormalModes(dobject):
 
         # Note that the propagator uses mass-scaled momenta.
         if self.propagator == "cayley":
-            for b in range(1, self.nbeads):
-                sk = np.sqrt(self.nm_factor[b])
-                square = (self.omegak[b] * dt / 2) ** 2
-                pqk[b, 0, 0] = (1 - square) / (1 + square)
-                pqk[b, 1, 1] = (1 - square) / (1 + square)
-                pqk[b, 0, 1] = -(4 * square / dt * sk) / (1 + square)
-                pqk[b, 1, 0] = dt / sk / (1 + square)
+            if self.splitting == "baoab":
+                # instead of halving the dt, square root of Cayley is employed for each a/2 step.
+                # See JCP 152, 104102 (2020) for details on this BCOCB scheme
+                for b in range(1, self.nbeads):
+                    sk = np.sqrt(self.nm_factor[b])
+                    sqroot = 1 / np.sqrt(1 + (self.omegak[b] * dt / sk) ** 2)
+                    pqk[b, 0, 0] = sqroot
+                    pqk[b, 1, 1] = sqroot
+                    pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
+                    pqk[b, 1, 0] = sqroot * dt / sk ** 2
+            else:  # usual Cayley propagator, see JCP 151, 124103 (2019) for details
+                for b in range(1, self.nbeads):
+                    sk = np.sqrt(self.nm_factor[b])
+                    square = (self.omegak[b] * dt / 2 / sk) ** 2
+                    pqk[b, 0, 0] = (1 - square) / (1 + square)
+                    pqk[b, 1, 1] = (1 - square) / (1 + square)
+                    pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
+                    pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
         else:  # exact propagator
             for b in range(1, self.nbeads):
                 sk = np.sqrt(self.nm_factor[b])
@@ -539,13 +561,24 @@ class NormalModes(dobject):
 
         # Note that the propagator uses mass-scaled momenta.
         if self.propagator == "cayley":
-            for b in range(1, self.nbeads):
-                sk = np.sqrt(self.o_nm_factor[b])
-                square = (self.o_omegak[b] * dt / 2) ** 2
-                pqk[b, 0, 0] = (1 - square) / (1 + square)
-                pqk[b, 1, 1] = (1 - square) / (1 + square)
-                pqk[b, 0, 1] = -(4 * square / dt * sk) / (1 + square)
-                pqk[b, 1, 0] = dt / sk / (1 + square)
+            if self.splitting == "baoab":
+                # instead of halving the dt, square root of Cayley is employed for each a/2 step.
+                # See JCP 152, 104102 (2020) for details on this BCOCB scheme
+                for b in range(1, self.nbeads):
+                    sk = np.sqrt(self.o_nm_factor[b])
+                    sqroot = 1 / np.sqrt(1 + (self.o_omegak[b] * dt / 2 / sk) ** 2)
+                    pqk[b, 0, 0] = sqroot
+                    pqk[b, 1, 1] = sqroot
+                    pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
+                    pqk[b, 1, 0] = sqroot * dt / sk ** 2
+            else:  # usual Cayley propagator, see JCP 151, 124103 (2019) for details
+                for b in range(1, self.nbeads):
+                    sk = np.sqrt(self.o_nm_factor[b])
+                    square = (self.o_omegak[b] * dt / 2 / sk) ** 2
+                    pqk[b, 0, 0] = (1 - square) / (1 + square)
+                    pqk[b, 1, 1] = (1 - square) / (1 + square)
+                    pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
+                    pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
         else:  # exact propagator
             for b in range(1, self.nbeads):
                 sk = np.sqrt(self.o_nm_factor[b])
@@ -778,8 +811,16 @@ class NormalModes(dobject):
                 self.beads.p += 0.5 * dt * self.fspring
 
     def free_qstep(self):
-        # !BH!: Should we update the comment here that now the propagator is either exact, NM or numerical, Cartesian?
-        """Exact normal mode propagator for the free ring polymer.
+        """Propagator for the free ring polymer.
+
+        The free ring polymer is propagated in normal modes by default,
+        using either exact or Cayley-modified propagator. The latter allows
+        for longer timestep and zero timestep error for q-dependent observables
+        in harmonic limit.
+
+        In certain cases (bosonic forces, open path propagator for bosons),
+        the exact or Cayley propagators are not available. In this case
+        numerical integration in Cartesian coordinates is employed.
 
         Note that the propagator works in mass scaled coordinates, so that the
         propagator matrix can be determined independently from the particular
@@ -788,7 +829,8 @@ class NormalModes(dobject):
         matrix multiplication.
 
         Also note that the centroid coordinate is propagated in qcstep, so is
-        not altered here.
+        not altered here. In the case of numerical integration in cartesian
+        coordinates, the centroid displacement is subtracted by hand.
         """
 
         if self.nbeads == 1:
