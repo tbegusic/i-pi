@@ -152,7 +152,7 @@ class Beads(dobject):
             for i in range(nbeads)
         ]
 
-        # kinetic energies of thhe beads, and total (classical) kinetic stress tensor
+        # kinetic energies of the beads, and total (classical) kinetic stress tensor
         dself.kins = depend_array(
             name="kins",
             value=np.zeros(nbeads, float),

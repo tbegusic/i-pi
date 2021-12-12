@@ -308,8 +308,6 @@ class NormalModes(dobject):
 
         dself.dt = depend_value(name="dt", value=1.0)
         dpipe(dd(self.motion).dt, dself.dt)
-        dself.splitting = depend_value(name="splitting", value="obabo")
-        dpipe(dd(self.motion).splitting, dself.splitting)
         dself.prop_pq = depend_array(
             name="prop_pq",
             value=np.zeros((self.beads.nbeads, 2, 2)),
@@ -319,7 +317,6 @@ class NormalModes(dobject):
                 dself.nm_factor,
                 dself.dt,
                 dself.propagator,
-                dself.splitting,
             ],
         )
         dself.o_prop_pq = depend_array(
@@ -331,7 +328,6 @@ class NormalModes(dobject):
                 dself.o_nm_factor,
                 dself.dt,
                 dself.propagator,
-                dself.splitting,
             ],
         )
 
@@ -511,24 +507,23 @@ class NormalModes(dobject):
 
         # Note that the propagator uses mass-scaled momenta.
         if self.propagator == "cayley":
-            if self.splitting == "baoab":
-                # instead of halving the dt, square root of Cayley is employed for each a/2 step.
-                # See JCP 152, 104102 (2020) for details on this BCOCB scheme
-                for b in range(1, self.nbeads):
-                    sk = np.sqrt(self.nm_factor[b])
-                    sqroot = 1 / np.sqrt(1 + (self.omegak[b] * dt / sk) ** 2)
-                    pqk[b, 0, 0] = sqroot
-                    pqk[b, 1, 1] = sqroot
-                    pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
-                    pqk[b, 1, 0] = sqroot * dt / sk ** 2
-            else:  # usual Cayley propagator, see JCP 151, 124103 (2019) for details
-                for b in range(1, self.nbeads):
-                    sk = np.sqrt(self.nm_factor[b])
-                    square = (self.omegak[b] * dt / 2 / sk) ** 2
-                    pqk[b, 0, 0] = (1 - square) / (1 + square)
-                    pqk[b, 1, 1] = (1 - square) / (1 + square)
-                    pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
-                    pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
+            for b in range(1, self.nbeads):
+                sk = np.sqrt(self.nm_factor[b])
+                square = (self.omegak[b] * dt / 2 / sk) ** 2
+                pqk[b, 0, 0] = (1 - square) / (1 + square)
+                pqk[b, 1, 1] = (1 - square) / (1 + square)
+                pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
+                pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
+        elif self.propagator == "cayley-baoab":
+            # instead of halving the dt, square root of Cayley is employed for each a/2 step.
+            # See JCP 152, 104102 (2020) for details on this BCOCB scheme
+            for b in range(1, self.nbeads):
+                sk = np.sqrt(self.nm_factor[b])
+                sqroot = 1 / np.sqrt(1 + (self.omegak[b] * dt / sk) ** 2)
+                pqk[b, 0, 0] = sqroot
+                pqk[b, 1, 1] = sqroot
+                pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
+                pqk[b, 1, 0] = sqroot * dt / sk ** 2
         else:  # exact propagator
             for b in range(1, self.nbeads):
                 sk = np.sqrt(self.nm_factor[b])
@@ -561,24 +556,23 @@ class NormalModes(dobject):
 
         # Note that the propagator uses mass-scaled momenta.
         if self.propagator == "cayley":
-            if self.splitting == "baoab":
-                # instead of halving the dt, square root of Cayley is employed for each a/2 step.
-                # See JCP 152, 104102 (2020) for details on this BCOCB scheme
-                for b in range(1, self.nbeads):
-                    sk = np.sqrt(self.o_nm_factor[b])
-                    sqroot = 1 / np.sqrt(1 + (self.o_omegak[b] * dt / 2 / sk) ** 2)
-                    pqk[b, 0, 0] = sqroot
-                    pqk[b, 1, 1] = sqroot
-                    pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
-                    pqk[b, 1, 0] = sqroot * dt / sk ** 2
-            else:  # usual Cayley propagator, see JCP 151, 124103 (2019) for details
-                for b in range(1, self.nbeads):
-                    sk = np.sqrt(self.o_nm_factor[b])
-                    square = (self.o_omegak[b] * dt / 2 / sk) ** 2
-                    pqk[b, 0, 0] = (1 - square) / (1 + square)
-                    pqk[b, 1, 1] = (1 - square) / (1 + square)
-                    pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
-                    pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
+            for b in range(1, self.nbeads):
+                sk = np.sqrt(self.o_nm_factor[b])
+                square = (self.o_omegak[b] * dt / 2 / sk) ** 2
+                pqk[b, 0, 0] = (1 - square) / (1 + square)
+                pqk[b, 1, 1] = (1 - square) / (1 + square)
+                pqk[b, 0, 1] = -(4 * square * sk ** 2 / dt) / (1 + square)
+                pqk[b, 1, 0] = dt / (1 + square) / sk ** 2
+        elif self.propagator == "cayley-baoab":
+            # instead of halving the dt, square root of Cayley is employed for each a/2 step.
+            # See JCP 152, 104102 (2020) for details on this BCOCB scheme
+            for b in range(1, self.nbeads):
+                sk = np.sqrt(self.o_nm_factor[b])
+                sqroot = 1 / np.sqrt(1 + (self.o_omegak[b] * dt / 2 / sk) ** 2)
+                pqk[b, 0, 0] = sqroot
+                pqk[b, 1, 1] = sqroot
+                pqk[b, 0, 1] = -sqroot * dt * self.omegak[b] ** 2
+                pqk[b, 1, 0] = sqroot * dt / sk ** 2
         else:  # exact propagator
             for b in range(1, self.nbeads):
                 sk = np.sqrt(self.o_nm_factor[b])

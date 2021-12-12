@@ -102,8 +102,8 @@ class InputNormalModes(Input):
             {
                 "dtype": str,
                 "default": "exact",
-                "help": "How to propagate the free ring polymer dynamics. Cayley transform is not exact but is strongly stable and avoid potential resonance issues. A bab scheme performs numerical verlet type propagation. All three options work for distinguishable particles. Only the bab propagator can be used with bosonic particles.",
-                "options": ["exact", "cayley", "bab"],
+                "help": "How to propagate the free ring polymer dynamics. Cayley transform is not exact but is strongly stable and avoid potential resonance issues. Cayley-BAOAB gives higher estimator accuracy if used with Leimkuhler's BAOAB splitting. A bab scheme performs numerical verlet type propagation. All three options work for distinguishable particles. Only the bab propagator can be used with bosonic particles.",
+                "options": ["exact", "cayley", "cayley-baoab", "bab"],
             },
         ),
     }
