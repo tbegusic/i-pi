@@ -76,6 +76,16 @@
       ! DMW
       DOUBLE PRECISION efield(3)
       INTEGER i, j
+
+      !------------------------------------------------------------------
+      !------------------------------------------------------------------
+      ! Inserted code by TB:
+      DOUBLE PRECISION :: rnorm, r(3), r2, r5, r7, pol ! Interatomic distance, difference between their z components and polarizability.
+      DOUBLE PRECISION, ALLOCATABLE :: pol_der(:, :)
+      DOUBLE PRECISION, PARAMETER :: atomic_pol = 0.396 ! Atomic polarizability in angstrom^3.
+      CHARACTER(LEN=1000000) :: out_string, out_string2    ! it's unlikely a string this large will ever be passed...
+      !------------------------------------------------------------------
+      !------------------------------------------------------------------
       
       ! parse the command line parameters
       ! intialize defaults
@@ -652,6 +662,28 @@
 
                IF (vstyle == 1) THEN
                   CALL LJ_getall(rc, sigma, eps, nat, atoms, cell_h, cell_ih, index_list, n_list, pot, forces, virial)
+                  pol = 0.0d0
+                  IF (.NOT. ALLOCATED(pol_der)) ALLOCATE (pol_der(nat, 3))
+                  pol_der = 0.0d0
+                  DO i=1, nat
+                     DO j=1, nat
+                        IF (j .ne. i) THEN
+                           r = atoms(i, :) - atoms(j, :)
+                           r2 = SUM(r**2)
+                           rnorm = SQRT(r2)
+                           IF (rnorm < rc) THEN
+                              r5 = rnorm**5
+                              r7 = r5 * r2
+                              pol = pol + (3 * r(3)**2 - r2) / r5
+                              pol_der(i,1) = pol_der(i,1) + r(1) * (r2 - 5 * r(3) ** 2) / r7
+                              pol_der(i,2) = pol_der(i,2) + r(2) * (r2 - 5 * r(3) ** 2) / r7
+                              pol_der(i,3) = pol_der(i,3) + r(3) * (3 * r2 - 5 * r(3) ** 2) / r7
+                           END IF
+                        END IF
+                     ENDDO
+                  ENDDO
+                  pol = atomic_pol * (nat + pol) / 0.52917721d0**3
+                  pol_der = 6 * atomic_pol * pol_der / 0.52917721d0**3
                ELSEIF (vstyle == 2) THEN
                   CALL SG_getall(rc, nat, atoms, cell_h, cell_ih, index_list, n_list, pot, forces, virial)
                ELSEIF (vstyle == 22) THEN ! ljpolymer potential.
@@ -720,6 +752,14 @@
                CALL writebuffer(socket,initbuffer,cbuf)
                IF (verbose > 1) WRITE(*,*) "    !write!=> extra: ", &
      &         initbuffer
+            ELSEIF (vstyle==1) THEN ! returns the polarizability through initbuffer
+               WRITE(string, '(a,3x,f15.8,3x,a)') '{"polarizability": [',pol,"],"
+               WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
+               WRITE(out_string, string2) '"polarizability_derivative": [',pol_der,"]}"
+               out_string = TRIM( TRIM(string)//TRIM(out_string) )
+               cbuf = LEN_TRIM(out_string)
+               CALL writebuffer(socket,cbuf) ! Writes back the gradient of total polarizability
+               CALL writebuffer(socket,out_string,cbuf)
             ELSE
                cbuf = 1 ! Size of the "extras" string
                CALL writebuffer(socket,cbuf) ! This would write out the "extras" string, but in this case we only use a dummy string.
