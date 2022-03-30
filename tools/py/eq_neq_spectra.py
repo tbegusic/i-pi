@@ -80,8 +80,8 @@ class EqNeqSpectra(object):
                     if (o.extra_type == "polarizability" or o.extra_type == "dipole"):
                         continue #Don't remove this element of output, we want to output dipoles and polarizabilities.
                     if o.extra_type == "dipole_derivative":
-                        self.der_fn = o.filename
                         self.der_stride = o.stride
+                        self.der_fn = o.filename
             #Store values that will help us loop over chk files.
             if (type(o) is eoutputs.CheckpointOutput):
                 self.chk_stride = o.stride
@@ -97,7 +97,7 @@ class EqNeqSpectra(object):
         file_in = self.chk_fn + '_' + str(step)
         new_beads = init_chk(file_in)[0]
         sim.syslist[0].beads.q = new_beads.q
-        sim.syslist[0].beads.p = new_beads.p + kick * self.epsilon * self.der[step]
+        sim.syslist[0].beads.p = new_beads.p + 0.5 * kick * self.epsilon * self.der[step]
         sim.step = 0
         print(file_in, kick)
 
