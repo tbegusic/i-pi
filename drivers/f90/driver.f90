@@ -82,8 +82,10 @@
       ! Inserted code by TB:
       DOUBLE PRECISION :: rnorm, r(3), r2, r5, r7, pol ! Interatomic distance, difference between their z components and polarizability.
       DOUBLE PRECISION, ALLOCATABLE :: pol_der(:, :)
-      DOUBLE PRECISION, PARAMETER :: atomic_pol = 0.396 ! Atomic polarizability in angstrom^3.
-      CHARACTER(LEN=1000000) :: out_string, out_string2    ! it's unlikely a string this large will ever be passed...
+      DOUBLE PRECISION, ALLOCATABLE :: dip_der(:, :)
+      DOUBLE PRECISION :: cell_abc(3)
+      DOUBLE PRECISION, PARAMETER :: atomic_pol = 2.67234d0 ! Atomic polarizability in bohr^3.
+      CHARACTER(LEN=1000000) :: out_string ! it's unlikely a string this large will ever be passed...
       !------------------------------------------------------------------
       !------------------------------------------------------------------
       
@@ -167,6 +169,8 @@
                   vstyle = 25
                ELSEIF (trim(cmdbuffer) == "doublewell_1D") THEN
                   vstyle = 24
+               ELSEIF (trim(cmdbuffer) == "water_dip_pol") THEN
+                  vstyle = 26
                ELSEIF (trim(cmdbuffer) == "gas") THEN
                   vstyle = 0  ! ideal gas
                ELSEIF (trim(cmdbuffer) == "dummy") THEN
@@ -633,6 +637,20 @@
                CALL dw1d_friction(nat, atoms, friction)
                CALL dw1d_dipole(nat, atoms, dip)
 
+            ELSEIF (vstyle == 26) THEN   ! Sets force and potential to zero,
+                                         ! computes only dipole moment, its gradient, and polarizability.
+               pot = 0
+               forces = 0.0d0
+               virial = 0.0d0 
+               IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
+               dip(:) = 0.0
+               dip_der(:, :) = 0.0
+               DO i=1, nat, 3
+                  dip = dip -1.1128d0 * atoms(i,:) + 0.5564d0 * (atoms(i+1,:) + atoms(i+2,:))
+                  dip_der(i, 3) = -1.1128d0 
+                  dip_der(i+1:i+2, 3) = 0.5564d0
+               ENDDO
+
             ELSE
                IF ((allocated(n_list) .neqv. .true.)) THEN
                   IF (verbose > 0) WRITE(*,*) " Allocating neighbour lists."
@@ -662,6 +680,9 @@
 
                IF (vstyle == 1) THEN
                   CALL LJ_getall(rc, sigma, eps, nat, atoms, cell_h, cell_ih, index_list, n_list, pot, forces, virial)
+                  DO i = 1, 3
+                     cell_abc(i) = cell_h(i,i)
+                  ENDDO
                   pol = 0.0d0
                   IF (.NOT. ALLOCATED(pol_der)) ALLOCATE (pol_der(nat, 3))
                   pol_der = 0.0d0
@@ -669,21 +690,23 @@
                      DO j=1, nat
                         IF (j .ne. i) THEN
                            r = atoms(i, :) - atoms(j, :)
+                           WHERE(r .GT. cell_abc/2) r = r - cell_abc
+                           WHERE(r .LE. -cell_abc/2) r = r + cell_abc
                            r2 = SUM(r**2)
                            rnorm = SQRT(r2)
-                           IF (rnorm < rc) THEN
+                           !IF (rnorm < 4*rc) THEN
                               r5 = rnorm**5
                               r7 = r5 * r2
                               pol = pol + (3 * r(3)**2 - r2) / r5
-                              pol_der(i,1) = pol_der(i,1) + r(1) * (r2 - 5 * r(3) ** 2) / r7
-                              pol_der(i,2) = pol_der(i,2) + r(2) * (r2 - 5 * r(3) ** 2) / r7
+                              pol_der(i,1:2) = pol_der(i,1:2) + r(1:2) * (r2 - 5 * r(3) ** 2) / r7
                               pol_der(i,3) = pol_der(i,3) + r(3) * (3 * r2 - 5 * r(3) ** 2) / r7
-                           END IF
+                           !END IF
                         END IF
                      ENDDO
                   ENDDO
-                  pol = atomic_pol * (nat + pol) / 0.52917721d0**3
-                  pol_der = 6 * atomic_pol * pol_der / 0.52917721d0**3
+                  !pol = atomic_pol * (nat + pol * atomic_pol)
+                  pol = atomic_pol * pol * atomic_pol
+                  pol_der = 6 * atomic_pol**2 * pol_der
                ELSEIF (vstyle == 2) THEN
                   CALL SG_getall(rc, nat, atoms, cell_h, cell_ih, index_list, n_list, pot, forces, virial)
                ELSEIF (vstyle == 22) THEN ! ljpolymer potential.
@@ -752,6 +775,14 @@
                CALL writebuffer(socket,initbuffer,cbuf)
                IF (verbose > 1) WRITE(*,*) "    !write!=> extra: ", &
      &         initbuffer
+            ELSEIF (vstyle==26) THEN ! returns the dipole and its derivative through initbuffer
+               WRITE(string, '(a,3x,f15.8,a,f15.8,a,f15.8, 3x,a)') '{"dipole": [',dip(1),",",dip(2),",",dip(3),"],"
+               WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
+               WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"]}"
+               out_string = TRIM(string)//TRIM(out_string)
+               cbuf = LEN_TRIM(out_string)
+               CALL writebuffer(socket,cbuf) ! Writes back the molecular dipole
+               CALL writebuffer(socket,TRIM(out_string),cbuf)
             ELSEIF (vstyle==1) THEN ! returns the polarizability through initbuffer
                WRITE(string, '(a,3x,f15.8,3x,a)') '{"polarizability": [',pol,"],"
                WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
