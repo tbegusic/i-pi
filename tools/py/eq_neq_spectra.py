@@ -12,6 +12,7 @@ import sys
 import os
 from copy import deepcopy
 from math import ceil, floor
+import numpy as np
 import xml.etree.ElementTree as et
 
 # Check that we have the import path for this i-PI set and if not, add it.
@@ -33,6 +34,16 @@ class EqNeqSpectra(object):
        epsilon: Magnitude of the external electric field.
        tsteps: Number of nonequilibrium dynamics steps.
     """
+    @staticmethod
+    def load_from_xml(file_in):
+        """Loads input file `file_in` and constructs an object of class EqNeqSpectra to store the 
+           relevant information.
+        """ 
+        tree = et.parse(file_in)
+        root = tree.getroot()
+        tsteps = int(root.find('./total_steps').text)
+        epsilon = float(root.find('./epsilon').text)
+        return EqNeqSpectra(epsilon, tsteps)
 
     def __init__(self, epsilon=0.1, tsteps=100):
         """Initializes EqNeqSpectra object.
@@ -45,49 +56,59 @@ class EqNeqSpectra(object):
         self.tsteps = tsteps
 
 
-def read_spec_input(file_in):
-    """Loads input file `file_in` and constructs an object of class EqNeqSpectra to store the relevant information.""" 
-    tree = et.parse(file_in)
-    root = tree.getroot()
-    tsteps = int(root.find('./total_steps').text)
-    epsilon = float(root.find('./epsilon').text)
-    return EqNeqSpectra(epsilon, tsteps)
+    def fetch_data_and_modify_simulation(self, sim):
+        """Gets relevant data from simulation into EqNeqSpectra.
 
-def modify_output_and_tsteps(sim, new_tsteps):
-    """Modifies sim.outputs elements by deleting everything that is not dipole or polarizability. This is
-       useful for nonequilibrium trajectories because we might want to print out more data from in the equilibrium
-       trajectory calculation.
+           Modifies sim.outputs elements by deleting everything that is not dipole or polarizability. This is
+           useful for nonequilibrium trajectories because we might want to print out more data from in the equilibrium
+           trajectory calculation.
+    
+           Also stores useful information like stride and filename of checkpoint/derivative outputs, which we read 
+           back to initialize nonequilibrium trajectories, as well as the total number of steps of the equilibrium
+           trajectory.
+           The total number of steps is modified and set to new_tsteps.
+    
+           This procedure is invoked once after equilibrium trajectory is computed and before the first nonequilibrium 
+           trajectory is launched.
+        """ 
+        self.nbeads = sim.syslist[0].beads.nbeads
+        #Have to loop over an auxiliary list of output elements, because sim.outputs is being modified inside the loop.
+        outputs = list(sim.outputs[:])
+        for o in outputs:
+            if (type(o) is eoutputs.TrajectoryOutput):
+                if o.what == "extras":
+                    if (o.extra_type == "polarizability" or o.extra_type == "dipole"):
+                        continue #Don't remove this element of output, we want to output dipoles and polarizabilities.
+                    if o.extra_type == "dipole_derivative":
+                        self.der_fn = o.filename
+                        self.der_stride = o.stride
+            #Store values that will help us loop over chk files.
+            if (type(o) is eoutputs.CheckpointOutput):
+                self.chk_stride = o.stride
+                self.chk_fn = o.filename
+            sim.outputs.remove(o) #Remove everything that is not dipole or polarizability.
+        #Modify tsteps and save old value, which will be used for looping over chk files.
+        self.tsteps_eq = sim.tsteps
+        sim.tsteps = self.tsteps
 
-       Also stores useful information like stride and filename of checkpoint outputs, which we read back to
-       initialize nonequilibrium trajectories, as well as the total number of steps of the equilibrium trajectory.
-       The total number of steps is modified and set to new_tsteps.
+    def prepare_for_run(self, sim, step, kick):
+        """Reads initial q and p from a checkpoint file and resets step to zero. 
+           Invoked for each neq trajectory."""
+        file_in = self.chk_fn + '_' + str(step)
+        new_beads = init_chk(file_in)[0]
+        sim.syslist[0].beads.q = new_beads.q
+        sim.syslist[0].beads.p = new_beads.p + kick * self.epsilon * self.der[step]
+        sim.step = 0
+        print(file_in, kick)
 
-       This procedure is invoked once after equilibrium trajectory is computed and before the first nonequilibrium 
-       trajectory is launched.
-    """ 
-    #Have to loop over an auxiliary list of output elements, because sim.outputs is being modified inside the loop.
-    outputs = list(sim.outputs[:])
-    for o in outputs:
-        if (type(o) is eoutputs.TrajectoryOutput):
-            if o.what == "extras" and (o.extra_type == "polarizability" or o.extra_type == "dipole"):
-                continue #Don't remove this element of output, we want to output dipoles and polarizabilities.
-        #Store values that will help us loop over chk files.
-        if (type(o) is eoutputs.CheckpointOutput):
-            stride = o.stride
-            chk_fn = o.filename
-        sim.outputs.remove(o) #Remove everything that is not dipole or polarizability.
-    #Modify tsteps and save old value, which will be used for looping over chk files.
-    tsteps = sim.tsteps
-    sim.tsteps = new_tsteps
-    return chk_fn, stride, tsteps
-
-def prepare_for_run(sim, file_in):
-    """Reads initial q and p from a checkpoint file and resets step to zero. Invoked for each neq trajectory.""" 
-    new_beads = init_chk(file_in)[0]
-    sim.syslist[0].beads.q = new_beads.q
-    sim.syslist[0].beads.p = new_beads.p
-    sim.step = 0
-    print(file_in)
+    def run(self, sim):
+        """Runs nonequilibrium trajectories."""
+        self.fetch_data_and_modify_simulation(sim)
+        self.der = np.transpose(np.array([np.loadtxt(self.der_fn + '_' + str(b)) for b in range(self.nbeads)]), [1,0,2])
+        for step in range(ceil(self.tsteps/self.chk_stride), floor(self.tsteps_eq/self.chk_stride)):
+            for kick in [-1, 1]:
+                self.prepare_for_run(sim, step, kick)
+                sim.run()
 
 def main(fn_input, fn_spec_input, options):
     """Main procedure:
@@ -99,7 +120,7 @@ def main(fn_input, fn_spec_input, options):
 
     ######################################
     # My changes:
-    eq_neq_spectra = read_spec_input(fn_spec_input)
+    spec = EqNeqSpectra.load_from_xml(fn_spec_input)
     ######################################
 
     # construct simulation based on input file
@@ -110,10 +131,7 @@ def main(fn_input, fn_spec_input, options):
 
     ######################################
     # My changes:
-    fn_chk_input, stride, tsteps_eq = modify_output_and_tsteps(simulation, eq_neq_spectra.tsteps)
-    for step in range(ceil(eq_neq_spectra.tsteps/stride), floor(tsteps_eq/stride)):
-        prepare_for_run(simulation, fn_chk_input + '_' + str(step))
-        simulation.run()
+    spec.run(simulation)
     ######################################
 
     softexit.trigger(" @ SIMULATION: Exiting cleanly.")
@@ -136,13 +154,11 @@ if __name__ == '__main__':
 
     options, args = parser.parse_args()
 
-    # make sure that we have exactly one input file and it exists
+    # make sure that we have exactly two input files and that they exist
     if len(args) == 0:
         parser.error('No input file name provided.')
-    elif len(args) == 1:
+    elif len(args) == 1 or len(args) > 2:
         parser.error('Provide two input file names: one for i-pi, one for spectra.')
-    elif len(args) > 2:
-        parser.error('Provide only two input file names.')
     else:
         for fn_in in args:
             if not os.path.exists(fn_in):
