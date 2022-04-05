@@ -643,13 +643,7 @@
                forces = 0.0d0
                virial = 0.0d0 
                IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
-               dip(:) = 0.0
-               dip_der(:, :) = 0.0
-               DO i=1, nat, 3
-                  dip = dip -1.1128d0 * atoms(i,:) + 0.5564d0 * (atoms(i+1,:) + atoms(i+2,:))
-                  dip_der(i, 3) = -1.1128d0 
-                  dip_der(i+1:i+2, 3) = 0.5564d0
-               ENDDO
+               CALL h2o_dipole(nat, atoms, dip, dip_der)
 
             ELSE
                IF ((allocated(n_list) .neqv. .true.)) THEN

@@ -25,6 +25,7 @@ from ipi.utils.softexit import softexit
 from ipi.engine.simulation import Simulation
 import ipi.engine.outputs as eoutputs
 from ipi.engine.initializer import init_chk
+from ipi.engine.motion.constrained_dynamics import NVEConstrainedIntegrator
 
 class EqNeqSpectra(object):
 
@@ -92,12 +93,14 @@ class EqNeqSpectra(object):
         sim.tsteps = self.tsteps
 
     def prepare_for_run(self, sim, step, kick):
-        """Reads initial q and p from a checkpoint file and resets step to zero. 
+        """Reads initial q and p from a checkpoint file, applies the kick, and resets step to zero. 
            Invoked for each neq trajectory."""
         file_in = self.chk_fn + '_' + str(step)
         new_beads = init_chk(file_in)[0]
         sim.syslist[0].beads.q = new_beads.q
         sim.syslist[0].beads.p = new_beads.p + 0.5 * kick * self.epsilon * self.der[step]
+        if (type(sim.syslist[0].motion.integrator) is NVEConstrainedIntegrator):
+            sim.syslist[0].motion.integrator.proj_cotangent()
         sim.step = 0
         print(file_in, kick)
 
