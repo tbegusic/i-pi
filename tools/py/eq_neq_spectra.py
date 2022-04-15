@@ -26,6 +26,7 @@ from ipi.engine.simulation import Simulation
 import ipi.engine.outputs as eoutputs
 from ipi.engine.initializer import init_chk
 from ipi.engine.motion.constrained_dynamics import NVEConstrainedIntegrator
+from ipi.utils.messages import verbosity
 
 class EqNeqSpectra(object):
 
@@ -79,6 +80,12 @@ class EqNeqSpectra(object):
             if (type(o) is eoutputs.TrajectoryOutput):
                 if o.what == "extras":
                     if (o.extra_type == "polarizability" or o.extra_type == "dipole"):
+                        if (o.extra_type == "polarizability"):
+                            self.pol_stride = o.stride
+                            self.pol_fn = o.filename
+                        elif (o.extra_type == "dipole"):
+                            self.dip_stride = o.stride
+                            self.dip_fn = o.filename
                         continue #Don't remove this element of output, we want to output dipoles and polarizabilities.
                     if o.extra_type == "dipole_derivative":
                         self.der_stride = o.stride
@@ -104,6 +111,10 @@ class EqNeqSpectra(object):
         sim.step = 0
         print(file_in, kick)
 
+    def process(self):
+        dipole = np.loadtxt(self.dip_fn + '_0')[0:self.tsteps_eq//self.dip_stride + 1]
+        np.savetxt("dipole", dipole)
+
     def run(self, sim):
         """Runs nonequilibrium trajectories."""
         self.fetch_data_and_modify_simulation(sim)
@@ -112,6 +123,7 @@ class EqNeqSpectra(object):
             for kick in [-1, 1]:
                 self.prepare_for_run(sim, step, kick)
                 sim.run()
+        self.process()
 
 def main(fn_input, fn_spec_input, options):
     """Main procedure:
@@ -136,7 +148,6 @@ def main(fn_input, fn_spec_input, options):
     # My changes:
     spec.run(simulation)
     ######################################
-
     softexit.trigger(" @ SIMULATION: Exiting cleanly.")
 
 
