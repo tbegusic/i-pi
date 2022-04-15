@@ -642,8 +642,11 @@
                pot = 0
                forces = 0.0d0
                virial = 0.0d0 
+               DO i = 1, 3
+                  vpars(i) = cell_h(i, i)
+               ENDDO
                IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
-               CALL h2o_dipole(nat, atoms, dip, dip_der)
+               CALL h2o_dipole(vpars(1:3), nat, atoms, dip, dip_der)
 
             ELSE
                IF ((allocated(n_list) .neqv. .true.)) THEN
