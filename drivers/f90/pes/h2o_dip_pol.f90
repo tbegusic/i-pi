@@ -56,7 +56,6 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
 
   DOUBLE PRECISION :: atoms_charged(nat, 3) !List of atoms, with O replaced by M site ('charged atoms'). (natoms, xyz)
   DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
-  DOUBLE PRECISION :: r_ij(3), r, r2, r3
 
   DOUBLE PRECISION :: E_stat(nat/3, 3) !(nmol, xyz)
   DOUBLE PRECISION :: T_tnsr(nat/3, nat/3, 3, 3, 3) !(nmol, nmol, n_charged_atom_per_mol, xyz, xyz)
@@ -76,6 +75,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
      ENDDO
      !Compute M site position.
      atoms_charged(i, :) = gam * atoms(i, :) + gam2 * (atoms_charged(i+1, :) + atoms_charged(i+2, :))
+     !Oxygen atoms.
      ro((i-1)/3 + 1, :) = atoms(i, :)
   ENDDO
   
@@ -102,7 +102,6 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), T_tnsr(nat/3, nat/3, 3, 3, 3)
 
     DOUBLE PRECISION :: a, rcut
-    INTEGER :: i, j, k, jatom
 
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
@@ -113,24 +112,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     !----------------------------------------------
     ! Short-range part - sum over pairs.
     !----------------------------------------------
-    E_stat = 0.0d0
-    T_tnsr = 0.0d0
-    DO i = 1, nat/3
-       DO j = 1, nat/3
-          DO k = 1, 3
-             jatom = 3 * (j - 1) + k
-             r_ij(:) = ro(i,:) - atoms_charged(jatom, :)
-             r_ij(:) = r_ij(:) - box(:) * NINT(r_ij(:)/box(:))
-             r2 = SUM(r_ij**2)
-             r = SQRT(r2)
-             IF (r .LE. rcut) THEN
-                r3 = r*r2
-                E_stat(i, :) = E_stat(i, :) + charges(k) * r_ij(:) / r3 * short_range_ew_screen(i, j, r, a)
-                T_tnsr(i, j, k, :, :) = ( r2 - 3 * outer(r_ij, r_ij) ) / (r3 * r2)
-             ENDIF
-          ENDDO
-       ENDDO
-    ENDDO
+    CALL short_range_ew(atoms_charged, ro, a, rcut, E_stat, T_tnsr)
 
     !----------------------------------------------
     ! Long-range part - performs sum in k space.
@@ -138,6 +120,42 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     CALL long_range_ew(atoms_charged, ro, a, E_stat)
 
   END SUBROUTINE calc_E_stat_and_T
+
+  SUBROUTINE short_range_ew(r, ro, a, rcut, E_stat, T_tnsr)
+
+    DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a, rcut 
+    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), T_tnsr(nat/3, nat/3, 3, 3, 3)
+
+    INTEGER :: i, j, k, jatom, nx, ny, nz, nmax
+    DOUBLE PRECISION :: r_ij(3), dr, dr2, dr3
+
+    nmax=NINT(rcut/MINVAL(box))
+    E_stat = 0.0d0
+    T_tnsr = 0.0d0
+    DO nx = -nmax, nmax
+    DO ny = -nmax, nmax
+    DO nz = -nmax, nmax
+    DO i = 1, nat/3
+       DO j = 1, nat/3
+          DO k = 1, 3
+             jatom = 3 * (j - 1) + k
+             r_ij(:) = ro(i,:) - r(jatom, :)
+             r_ij(:) = r_ij(:) - box(:) * (NINT(r_ij(:)/box(:)) + (/nx, ny, nz/) )
+             dr2 = SUM(r_ij**2)
+             IF (dr2 .LT. rcut**2) THEN
+                dr = SQRT(dr2)
+                dr3 = dr*dr2
+                E_stat(i, :) = E_stat(i, :) + charges(k) * r_ij(:) / dr3 * short_range_ew_screen(i, j, dr, a)
+                T_tnsr(i, j, k, :, :) = ( dr2 - 3 * outer(r_ij, r_ij) ) / (dr3 * dr2)
+             ENDIF
+          ENDDO
+       ENDDO
+    ENDDO
+    ENDDO
+    ENDDO
+    ENDDO
+
+  END SUBROUTINE short_range_ew
 
   FUNCTION short_range_ew_screen(i, j, r, a) RESULT(sc)
 
@@ -160,12 +178,12 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3)
 
     INTEGER :: l, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, rk(3), rk2, rkmax2, lat(3), q(nat)
+    DOUBLE PRECISION :: b, f, rk(3), rk2, rkmax2, lat(3), q(nat), tmp(nat/3)
     DOUBLE COMPLEX :: sk
 
-    kmax = INT(a * MAXVAL(box)) * 2
+    kmax = INT(a * MAXVAL(box))
     lat(:) = twopi/box(:) 
-    rkmax2 = (twopi * a)**2 * 20
+    rkmax2 = (twopi * a)**2
     b = 0.25d0/(a**2)
     f = 4.0d0 * pi / PRODUCT(box)     ! 4pi / V !
     q(:) = PACK(SPREAD(charges(:), 2, nat/3), .TRUE.)
@@ -178,10 +196,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
           DO kz = -kmax,kmax
              rk(3) = lat(3)*kz
              rk2 = SUM(rk(:)**2)
-             IF (rk2 .LT. rkmax2 .AND. rk2 .NE. 0.d0) THEN
-                sk = (EXP(-b*rk2) / rk2) * SUM(q * EXP(-IU * k_dot_r(nat, rk, r)))
+             IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
+                sk = f * (EXP(-b*rk2) / rk2) * SUM(q * EXP(-IU * k_dot_r(nat, rk, r)))
+                tmp = AIMAG(EXP(IU * k_dot_r(nat/3, rk, ro)) * sk)
                 DO l = 1, 3
-                   E_stat(:,l) = E_stat(:, l) + rk(l) * AIMAG(EXP(IU * k_dot_r(nat/3, rk, ro)) * sk)
+                   E_stat(:,l) = E_stat(:, l) + rk(l)  * tmp(:)
                 ENDDO
              ENDIF
           ENDDO
@@ -261,79 +280,6 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     ENDDO
 
   END FUNCTION k_dot_r
-
-  !FUNCTION long_range_ew_kspace(box,r,q,a, kmax) RESULT(E_kspace)
-  !  IMPLICIT NONE
-  !  ! ------------------------------------------------------------------
-  !  ! Reciprocal space part of the Ewald sum for non-cubic systems
-  !  ! ------------------------------------------------------------------
-  !  DOUBLE PRECISION :: E_kspace(3,nat)
-
-  !  DOUBLE PRECISION, INTENT(IN) :: box(3), r(3,nat), q(nat), a
-  !  INTEGER, INTENT(IN) :: kmax
-  !  INTEGER :: i, j, k, kx,ky,kz
-  !  DOUBLE PRECISION, ALLOCATABLE :: ck(:,:,:),sk(:,:,:)
-  !  DOUBLE PRECISION :: cxy(nat),sxy(nat)
-  !  DOUBLE PRECISION :: lat(3), ri(3)
-  !  DOUBLE PRECISION :: rkmax2
-  !  DOUBLE PRECISION :: b,f,rk(3)
-  !  DOUBLE PRECISION :: c,s,rk2,sr,si,tr(nat),ti(nat),w
-  !
-  !  lat(:) = twopi/box(:) 
-  !  b = 0.25d0/(a**2)
-  !  f = twopi/PRODUCT(box)     ! 2pi / V !
-  !  rkmax2 = (2.d0 * pi * a)**2
-
-  !  ALLOCATE(ck(3,nat,-kmax:kmax), sk(3,nat,-kmax:kmax))
-  !
-  !  ! setup the trigonometric arrays
-  !  DO j=1, 3 !xyz
-  !     DO i = 1,nat !natoms
-  !        ck(j,i,0) = 1.d0
-  !        sk(j,i,0) = 0.d0
-  !        ri(j) = lat(j)*r(j,i)
-  !        c = dcos(ri(j))
-  !        s = dsin(ri(j))
-  !        DO k = 1,kmax
-  !           ck(j,i,k) = c*ck(j,i,k-1) - s*sk(j,i,k-1)
-  !           sk(j,i,k) = s*ck(j,i,k-1) + c*sk(j,i,k-1)
-  !           IF (j==2 .OR. j==3) THEN
-  !              ck(j,i,-k) =  ck(j,i,k)
-  !              sk(j,i,-k) = -sk(j,i,k)
-  !           ENDIF
-  !        ENDDO
-  !     ENDDO
-  !  ENDDO
-  !
-  !  ! and evaluate the reciprocal space sum
-  !  E_kspace = 0.0d0
-  !  DO kx = 0,kmax
-  !     IF (kx .EQ. 1) f = 2.d0*f
-  !     rk(1) = lat(1)*kx
-  !     DO ky = -kmax,kmax
-  !        rk(2) = lat(2)*ky
-  !        cxy(:) = ck(1,:,kx)*ck(2,:,ky)-sk(1,:,kx)*sk(2,:,ky)
-  !        sxy(:) = ck(1,:,kx)*sk(2,:,ky)+sk(1,:,kx)*ck(2,:,ky)
-  !        DO kz = -kmax,kmax
-  !           rk(3) = lat(3)*kz
-  !           rk2 = SUM(rk(:)**2)
-  !           IF (rk2 .LT. rkmax2 .AND. rk2 .NE. 0.d0) THEN
-  !              tr(:) = cxy(:)*ck(3,:,kz) - sxy(:)*sk(3,:,kz)
-  !              ti(:) = cxy(:)*sk(3,:,kz) + sxy(:)*ck(3,:,kz)
-  !              sr = SUM(q(:) * tr(:))
-  !              si = SUM(q(:) * ti(:))
-  !              w = 2.d0*(f/rk2)*dexp(-b*rk2)
-  !              DO j = 1, 3
-  !                 E_kspace(j,:) = E_kspace(j,:) + w * rk(j) * (si * tr(:) - sr * ti(:))
-  !              ENDDO
-  !           ENDIF
-  !        ENDDO
-  !     ENDDO
-  !  ENDDO
-
-  !  DEALLOCATE(ck, sk)
-  !
-  !END FUNCTION long_range_ew_kspace
 
   FUNCTION outer(a, b)
 
