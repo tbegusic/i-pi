@@ -128,47 +128,49 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
 
     INTEGER :: i, j, k, jatom, nx, ny, nz, nmax
     DOUBLE PRECISION :: r_ij(3), dr, dr2, dr3
+    LOGICAL :: self_term
 
     nmax=NINT(rcut/MINVAL(box))
     E_stat = 0.0d0
     T_tnsr = 0.0d0
     DO nx = -nmax, nmax
-    DO ny = -nmax, nmax
-    DO nz = -nmax, nmax
-    DO i = 1, nat/3
-       DO j = 1, nat/3
-          DO k = 1, 3
-             jatom = 3 * (j - 1) + k
-             r_ij(:) = ro(i,:) - r(jatom, :)
-             r_ij(:) = r_ij(:) - box(:) * (NINT(r_ij(:)/box(:)) + (/nx, ny, nz/) )
-             dr2 = SUM(r_ij**2)
-             IF (dr2 .LT. rcut**2) THEN
-                dr = SQRT(dr2)
-                dr3 = dr*dr2
-                E_stat(i, :) = E_stat(i, :) + charges(k) * r_ij(:) / dr3 * short_range_ew_screen(i, j, dr, a)
-                T_tnsr(i, j, k, :, :) = ( dr2 - 3 * outer(r_ij, r_ij) ) / (dr3 * dr2)
-             ENDIF
+       DO ny = -nmax, nmax
+          DO nz = -nmax, nmax
+             DO i = 1, nat/3
+                DO j = 1, nat/3
+                   DO k = 1, 3
+                      jatom = 3 * (j - 1) + k
+                      r_ij(:) = ro(i,:) - r(jatom, :)
+                      r_ij(:) = r_ij(:) - box(:) * (NINT(r_ij(:)/box(:)) + (/nx, ny, nz/) )
+                      dr2 = SUM(r_ij**2)
+                      IF (dr2 .LT. rcut**2) THEN
+                         dr = SQRT(dr2)
+                         dr3 = dr*dr2
+                         self_term = (i .EQ. j) .AND. (nx .EQ. 0) .AND. (ny .EQ. 0).AND. (nz .EQ. 0)
+                         E_stat(i, :) = E_stat(i, :) + charges(k) * r_ij(:) / dr3 * short_range_ew_screen(dr, a, self_term)
+                         IF (i .NE. j) T_tnsr(i, j, k, :, :) = ( dr2 - 3 * outer(r_ij, r_ij) ) / (dr3 * dr2)
+                      ENDIF
+                   ENDDO
+                ENDDO
+             ENDDO
           ENDDO
        ENDDO
-    ENDDO
-    ENDDO
-    ENDDO
     ENDDO
 
   END SUBROUTINE short_range_ew
 
-  FUNCTION short_range_ew_screen(i, j, r, a) RESULT(sc)
+  FUNCTION short_range_ew_screen(r, a, self_term) RESULT(sc)
 
     DOUBLE PRECISION :: sc
 
-    INTEGER, INTENT(IN) :: i, j
     DOUBLE PRECISION, INTENT(IN) :: r, a
+    LOGICAL, INTENT(IN) :: self_term
 
     DOUBLE PRECISION :: ra
 
     ra = a * r
     sc = erfc(ra) + 2.0d0 / SQRT(pi) * ra * EXP(-ra**2)
-    IF (i .EQ. j) sc = sc - 1.0d0 !Self-interaction term.
+    IF (self_term) sc = sc - 1.0d0 !Self-interaction term.
 
   END FUNCTION short_range_ew_screen
 
