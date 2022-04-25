@@ -114,7 +114,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     !----------------------------------------------
     ! Long-range part - performs sum in k space.
     !----------------------------------------------
-    CALL long_range_ew(atoms_charged, ro, a, E_stat)
+    CALL long_range_ew(atoms_charged, ro, a, E_stat, dEdr)
 
   END SUBROUTINE calc_el_field
 
@@ -134,11 +134,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     DO i = 1, nat/3
        iatom = 3 * (i - 1) + 1
        DO j = 1, nat/3
+          jatom = 3 * (j - 1)
           DO k = 1, 3
              T_tnsr = 0.0d0
-             jatom = 3 * (j - 1) + k
              !Nearest neighbor.
-             r_ij_0(:) = ro(i,:) - r(jatom, :)
+             r_ij_0(:) = ro(i,:) - r(jatom + k, :)
              r_ij_0(:) = r_ij_0(:) - box(:) * NINT(r_ij_0(:)/box(:))
              DO nx = -nmax, nmax
                 DO ny = -nmax, nmax
@@ -170,16 +170,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
              !--------------------------------------------------------------------------------------------------------
              !Sum for i-th oxygen atom.
              dEdr(i, iatom, :, :) =  dEdr(i, iatom, :, :) + T_tnsr(:, :)
-             IF (k .EQ. 1) THEN
-                !j-th molecule oxygen atom. Includes i==j term.
-                dEdr(i, jatom, :, :) = dEdr(i, jatom, :, :) - gam * T_tnsr(:, :)
-                !j-th molecule hydrogen atoms (part that comes from M site).
-                dEdr(i, jatom + 1, :, :) = - gam2 * T_tnsr(:, :)
-                dEdr(i, jatom + 2, :, :) = - gam2 * T_tnsr(:, :)
-             ELSE
-                !j-th molecule hydrogen atoms (part that comes from hydrogen atom positions).
-                dEdr(i, jatom, :, :) = dEdr(i, jatom, :, :) - T_tnsr(:, :)
-             ENDIF
+             !Derivative of electric field at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
+             CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), T_tnsr(:, :), k)
              !--------------------------------------------------------------------------------------------------------
              !--------------------------------------------------------------------------------------------------------
           ENDDO
@@ -215,14 +207,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
 
   END FUNCTION short_range_T_tnsr
 
-  SUBROUTINE long_range_ew(r, ro, a, E_stat)
+  SUBROUTINE long_range_ew(r, ro, a, E_stat, dEdr)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a    
-    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), dEdr(nat/3, nat, 3, 3)
 
-    INTEGER :: l, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, rk(3), rk2, rkmax2, lat(3), q(nat), tmp(nat/3)
-    DOUBLE COMPLEX :: sk
+    INTEGER :: i, j, k, jatom, kx, ky, kz, kmax
+    DOUBLE PRECISION :: b, f, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), re_part
+    DOUBLE COMPLEX :: sk_i(nat), sk, exp_ikr(nat/3), tmp(nat/3)
 
     kmax = INT(a * MAXVAL(box))
     lat(:) = twopi/box(:) 
@@ -239,11 +231,25 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
           DO kz = -kmax,kmax
              rk(3) = lat(3)*kz
              rk2 = SUM(rk(:)**2)
+             rk_out = outer(rk, rk)
              IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
-                sk = f * (EXP(-b*rk2) / rk2) * SUM(q * EXP(-IU * k_dot_r(nat, rk, r)))
-                tmp = AIMAG(EXP(IU * k_dot_r(nat/3, rk, ro)) * sk)
-                DO l = 1, 3
-                   E_stat(:,l) = E_stat(:, l) + rk(l)  * tmp(:)
+                sk_i = f * (EXP(-b*rk2) / rk2) * q * EXP(-IU * k_dot_r(nat, rk, r))
+                sk = SUM(sk_i)
+                exp_ikr = EXP(IU * k_dot_r(nat/3, rk, ro))
+                tmp(:) = exp_ikr(:) * SUM(sk_i)
+                DO i = 1, nat/3
+                   iatom = 3 * (i-1) + 1
+                   E_stat(i,:) = E_stat(i, :) + rk(:)  * AIMAG(tmp(i))
+                   !Sum for i-th oxygen atom.
+                   dEdr(i, iatom, :, :) = dEdr(i, iatom, :, :) + rk_out(:, :) * REAL(tmp(i), KIND=KIND(1.0d0))
+                   DO j = 1, nat/3
+                      jatom = 3 * (j-1)
+                      DO k = 1, 3
+                         !Derivatives with respect to atom k of molecule j.
+                         re_part = REAL(exp_ikr(i) * sk_i(jatom + k), KIND=KIND(1.0d0))
+                         CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), re_part * rk_out(:, :), k)
+                      ENDDO
+                   ENDDO
                 ENDDO
              ENDIF
           ENDDO
@@ -251,6 +257,28 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     ENDDO
 
   END SUBROUTINE long_range_ew
+
+  SUBROUTINE el_field_der_ij(dEi_drj, tnsr, k)
+
+    DOUBLE PRECISION, INTENT(INOUT) :: dEi_drj(3, 3, 3)
+    DOUBLE PRECISION, INTENT(IN) :: tnsr(3, 3)
+    INTEGER, INTENT(IN) :: k
+
+    INTEGER :: h
+
+    IF (k .EQ. 1) THEN
+       !j-th molecule oxygen atom. Includes i==j term.
+       dEi_drj(k, :, :) = dEi_drj(k, :, :) - gam * tnsr(:, :)
+       !j-th molecule hydrogen atoms (part that comes from M site).
+       DO h = 1, 2
+          dEi_drj(k + h, :, :) = dEi_drj(k + h, :, :) - gam2 * tnsr(:, :)
+       ENDDO
+    ELSE
+       !j-th molecule hydrogen atoms (part that comes from hydrogen atom positions).
+       dEi_drj(k, :, :) = dEi_drj(k, :, :) - tnsr(:, :)
+    ENDIF   
+
+  END SUBROUTINE el_field_der_ij
 
   FUNCTION calc_dipole(atoms, charges, E_stat)
 
@@ -292,7 +320,6 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
     ENDDO
 
   END FUNCTION calc_dipole_derivative
-
 
   FUNCTION k_dot_r(n, k, r)
 
