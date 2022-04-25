@@ -86,6 +86,8 @@
       DOUBLE PRECISION :: cell_abc(3)
       DOUBLE PRECISION, PARAMETER :: atomic_pol = 2.67234d0 ! Atomic polarizability in bohr^3.
       CHARACTER(LEN=1000000) :: out_string ! it's unlikely a string this large will ever be passed...
+      INTEGER, PARAMETER :: nbeads=1, dipole_freq=1
+      INTEGER :: counter
       !------------------------------------------------------------------
       !------------------------------------------------------------------
       
@@ -381,6 +383,8 @@
             STOP "ENDED" 
          ENDIF   
          isinit = .true.
+      ELSEIF (vstyle == 26) THEN !water dipole and polarizability
+         counter = 0
       ENDIF
 
       IF (verbose > 0) THEN
@@ -646,7 +650,12 @@
                   vpars(i) = cell_h(i, i)
                ENDDO
                IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
-               CALL h2o_dipole(vpars(1:3), nat, atoms, dip, dip_der)
+               IF (MOD(counter/nbeads, dipole_freq) .EQ. 0) THEN
+                  CALL h2o_dipole(vpars(1:3), nat, atoms, dip, dip_der)
+               ELSE
+                  dip = 0; dip_der = 0
+               ENDIF
+               counter = counter + 1
 
             ELSE
                IF ((allocated(n_list) .neqv. .true.)) THEN
