@@ -88,7 +88,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
      dip_i(i, :) = calc_dipole(atoms_charged(iatom:iatom+2, :), charges / 1.3d0, E_stat(i, :))
      !Gradient of the i-th dipole moment.
      IF (compute_der) THEN
-        dip_der_i(i, :, : ,:) = calc_dipole_derivative(dEdr(i, :, :, :), i)
+        dip_der_i(i, :, : ,:) = calc_dipole_derivative(charges / 1.3d0, dEdr(i, :, :, :), i)
      ELSE
         dip_der_i(i, :, :, :) = 0.0d0
      ENDIF
@@ -309,8 +309,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
 
   END FUNCTION calc_dipole
 
-  FUNCTION calc_dipole_derivative(dEdr, i) RESULT(dip_der)
+  FUNCTION calc_dipole_derivative(charges, dEdr, i) RESULT(dip_der)
 
+    DOUBLE PRECISION, INTENT(IN) :: charges(3)
     DOUBLE PRECISION, INTENT(IN) :: dEdr(nat, 3, 3)
     INTEGER, INTENT(IN) :: i
 
@@ -322,8 +323,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
     iatom = 3 * (i - 1) + 1
     DO k = 1, 3
        !Gradient of the permanent molecular dipole moment.
-       dip_der(iatom, k, k) = gam * qm !i-th oxygen.
-       dip_der(iatom+1:iatom+2, k, k) = qh + gam2 * qm !i-th hydrogen.
+       dip_der(iatom, k, k) = gam * charges(1) !i-th oxygen.
+       dip_der(iatom+1:iatom+2, k, k) = charges(2) + gam2 * charges(1) !i-th hydrogen.
        !Multiply induced part of dipole derivative by alpha.
        DO j = 1, nat
           dip_der(j, k, :) = dip_der(j, k, :) + alpha(k) * dEdr(j, k, :)
