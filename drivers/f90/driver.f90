@@ -45,7 +45,7 @@
       INTEGER, ALLOCATABLE :: seed(:)
       INTEGER verbose
       INTEGER commas(4), par_count      ! stores the index of commas in the parameter string
-      DOUBLE PRECISION vpars(4)         ! array to store the parameters of the potential
+      DOUBLE PRECISION vpars(5)         ! array to store the parameters of the potential
       
       ! SOCKET COMMUNICATION BUFFERS
       CHARACTER(LEN=12) :: header
@@ -86,8 +86,9 @@
       DOUBLE PRECISION :: cell_abc(3)
       DOUBLE PRECISION, PARAMETER :: atomic_pol = 2.67234d0 ! Atomic polarizability in bohr^3.
       CHARACTER(LEN=1000000) :: out_string ! it's unlikely a string this large will ever be passed...
-      INTEGER, PARAMETER :: nbeads=1, dipole_freq=1
-      INTEGER :: counter
+      INTEGER :: nbeads=1, dipole_freq=1, der_freq=1, nsteps_eq=1000000, nsteps_neq=1000000
+      INTEGER :: counter, step
+      LOGICAL :: compute_dip, compute_der, neq = .FALSE.
       !------------------------------------------------------------------
       !------------------------------------------------------------------
       
@@ -385,6 +386,14 @@
          isinit = .true.
       ELSEIF (vstyle == 26) THEN !water dipole and polarizability
          counter = 0
+         IF (par_count == 5) THEN
+            nbeads=INT(vpars(1))
+            dipole_freq=INT(vpars(2))
+            der_freq=INT(vpars(3))
+            nsteps_eq=INT(vpars(4))
+            nsteps_neq=INT(vpars(5))
+         ENDIF
+         isinit = .true.
       ENDIF
 
       IF (verbose > 0) THEN
@@ -650,8 +659,22 @@
                   vpars(i) = cell_h(i, i)
                ENDDO
                IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
-               IF (MOD(counter/nbeads, dipole_freq) .EQ. 0) THEN
-                  CALL h2o_dipole(vpars(1:3), nat, atoms, dip, dip_der)
+               step = counter/nbeads
+               IF ((step .GT. nsteps_eq) .AND. (.NOT. neq) ) THEN
+                  !Step greater than number of equilibrium dynamics steps, so we mark that we
+                  !are now doing neq dynamics and reset counter/step to zero.
+                  neq = .TRUE.
+                  counter = 0
+                  step = 0
+               ELSEIF ((step .GT. nsteps_neq) .AND. neq) THEN
+                  !Step greater than number of nonequilibrium dynamics steps, so we reset counter/step to zero.
+                  counter = 0
+                  step = 0
+               ENDIF
+               compute_dip = MOD(step, dipole_freq) .EQ. 0
+               compute_der = (MOD(step, der_freq) .EQ. 0) .AND. (.NOT. neq)
+               IF (compute_dip .OR. compute_der) THEN
+                  CALL h2o_dipole(vpars(1:3), nat, atoms, compute_der, dip, dip_der)
                ELSE
                   dip = 0; dip_der = 0
                ENDIF

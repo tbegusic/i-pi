@@ -31,13 +31,14 @@
 !
 
 ! Dipole moment.
-SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
+SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
 
   IMPLICIT NONE
   
   DOUBLE PRECISION, INTENT(IN) :: box(3)
   INTEGER, INTENT(IN) :: nat
   DOUBLE PRECISION, INTENT(IN) :: atoms(nat, 3)
+  LOGICAL, INTENT(IN) :: compute_der
   DOUBLE PRECISION, INTENT(INOUT) :: dip(3)
   DOUBLE PRECISION, INTENT(INOUT) :: dip_der(nat, 3)
 
@@ -86,7 +87,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
      !Calculate dipole of i-th molecule. Using scaled charges for permanent dipole according to Hamm.
      dip_i(i, :) = calc_dipole(atoms_charged(iatom:iatom+2, :), charges / 1.3d0, E_stat(i, :))
      !Gradient of the i-th dipole moment.
-     dip_der_i(i, :, : ,:) = calc_dipole_derivative(dEdr(i, :, :, :), i)
+     IF (compute_der) THEN
+        dip_der_i(i, :, : ,:) = calc_dipole_derivative(dEdr(i, :, :, :), i)
+     ELSE
+        dip_der_i(i, :, :, :) = 0.0d0
+     ENDIF
   ENDDO
   
   dip = SUM(dip_i, DIM=1)
@@ -154,7 +159,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
                          gauss_part = 2.0d0 / sqrtpi * a_dr * EXP(-a_dr**2)
                          screen = short_range_ew_screen(a_dr, gauss_part, self_term)
                          ! Contribution to the T tensor for given i, j, k, n (used for dipole derivative).
-                         T_tnsr = T_tnsr + charges(k) * short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                         IF (compute_der) THEN
+                            T_tnsr = T_tnsr + charges(k) * short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                         ENDIF
                          !--------------------------------------------------------------------------------------
                          ! Contribution to the electric field of molecule i from atom k in molecule j in cell n.
                          !--------------------------------------------------------------------------------------
@@ -168,10 +175,12 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
              !--------------------------------------------------------------------------------------------------------
              ! Compute the derivative of the electric field of molecule i w.r.t. coordinates of atom k of molecule j.
              !--------------------------------------------------------------------------------------------------------
-             !Sum for i-th oxygen atom.
-             dEdr(i, iatom, :, :) =  dEdr(i, iatom, :, :) + T_tnsr(:, :)
-             !Derivative of electric field at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
-             CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), T_tnsr(:, :), k)
+             IF (compute_der) THEN
+                !Sum for i-th oxygen atom.
+                dEdr(i, iatom, :, :) =  dEdr(i, iatom, :, :) + T_tnsr(:, :)
+                !Derivative of electric field at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
+                CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), T_tnsr(:, :), k)
+             ENDIF
              !--------------------------------------------------------------------------------------------------------
              !--------------------------------------------------------------------------------------------------------
           ENDDO
@@ -231,7 +240,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
           DO kz = -kmax,kmax
              rk(3) = lat(3)*kz
              rk2 = SUM(rk(:)**2)
-             rk_out = outer(rk, rk)
+             IF(compute_der) rk_out = outer(rk, rk)
              IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
                 sk_i = f * (EXP(-b*rk2) / rk2) * q * EXP(-IU * k_dot_r(nat, rk, r))
                 sk = SUM(sk_i)
@@ -240,16 +249,18 @@ SUBROUTINE h2o_dipole(box, nat, atoms, dip, dip_der)
                 DO i = 1, nat/3
                    iatom = 3 * (i-1) + 1
                    E_stat(i,:) = E_stat(i, :) + rk(:)  * AIMAG(tmp(i))
-                   !Sum for i-th oxygen atom.
-                   dEdr(i, iatom, :, :) = dEdr(i, iatom, :, :) + rk_out(:, :) * REAL(tmp(i), KIND=KIND(1.0d0))
-                   DO j = 1, nat/3
-                      jatom = 3 * (j-1)
-                      DO k = 1, 3
-                         !Derivatives with respect to atom k of molecule j.
-                         re_part = REAL(exp_ikr(i) * sk_i(jatom + k), KIND=KIND(1.0d0))
-                         CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), re_part * rk_out(:, :), k)
+                   IF (compute_der) THEN
+                      !Sum for i-th oxygen atom.
+                      dEdr(i, iatom, :, :) = dEdr(i, iatom, :, :) + rk_out(:, :) * REAL(tmp(i), KIND=KIND(1.0d0))
+                      DO j = 1, nat/3
+                         jatom = 3 * (j-1)
+                         DO k = 1, 3
+                            !Derivatives with respect to atom k of molecule j.
+                            re_part = REAL(exp_ikr(i) * sk_i(jatom + k), KIND=KIND(1.0d0))
+                            CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), re_part * rk_out(:, :), k)
+                         ENDDO
                       ENDDO
-                   ENDDO
+                   ENDIF
                 ENDDO
              ENDIF
           ENDDO
