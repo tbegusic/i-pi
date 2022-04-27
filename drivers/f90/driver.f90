@@ -83,6 +83,7 @@
       DOUBLE PRECISION :: rnorm, r(3), r2, r5, r7, pol ! Interatomic distance, difference between their z components and polarizability.
       DOUBLE PRECISION, ALLOCATABLE :: pol_der(:, :)
       DOUBLE PRECISION, ALLOCATABLE :: dip_der(:, :)
+      DOUBLE PRECISION :: polar(3, 3)
       DOUBLE PRECISION :: cell_abc(3)
       DOUBLE PRECISION, PARAMETER :: atomic_pol = 2.67234d0 ! Atomic polarizability in bohr^3.
       CHARACTER(LEN=1000000) :: out_string ! it's unlikely a string this large will ever be passed...
@@ -674,9 +675,9 @@
                compute_dip = MOD(step, dipole_freq) .EQ. 0
                compute_der = (MOD(step, der_freq) .EQ. 0) .AND. (.NOT. neq)
                IF (compute_dip .OR. compute_der) THEN
-                  CALL h2o_dipole(vpars(1:3), nat, atoms, compute_der, dip, dip_der)
+                  CALL h2o_dipole(vpars(1:3), nat, atoms, compute_der, dip, dip_der, polar)
                ELSE
-                  dip = 0; dip_der = 0
+                  dip = 0; dip_der = 0; polar = 0
                ENDIF
                counter = counter + 1
 
@@ -807,8 +808,11 @@
             ELSEIF (vstyle==26) THEN ! returns the dipole and its derivative through initbuffer
                WRITE(string, '(a,3x,f15.8,a,f15.8,a,f15.8, 3x,a)') '{"dipole": [',dip(1),",",dip(2),",",dip(3),"],"
                WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
-               WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"]}"
+               !WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"]}"
+               WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"],"
                out_string = TRIM(string)//TRIM(out_string)
+               WRITE(string, '(a,3x, 8(f15.8, ","),f15.8,3x,a)') '"polarizability": [',polar,"]}"
+               out_string = TRIM(out_string)//TRIM(string)
                cbuf = LEN_TRIM(out_string)
                CALL writebuffer(socket,cbuf) ! Writes back the molecular dipole
                CALL writebuffer(socket,TRIM(out_string),cbuf)

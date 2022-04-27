@@ -31,7 +31,7 @@
 !
 
 ! Dipole moment.
-SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
+SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   IMPLICIT NONE
   
@@ -41,6 +41,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
   LOGICAL, INTENT(IN) :: compute_der
   DOUBLE PRECISION, INTENT(INOUT) :: dip(3)
   DOUBLE PRECISION, INTENT(INOUT) :: dip_der(nat, 3)
+  DOUBLE PRECISION, INTENT(INOUT) :: pol(3, 3)
 
   DOUBLE PRECISION, PARAMETER :: pi = DACOS(-1.0d0), twopi = 2 * pi, sqrtpi = SQRT(pi)
   DOUBLE COMPLEX, PARAMETER :: IU = CMPLX(0.0d0, 1.0d0, KIND=16)
@@ -52,14 +53,15 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
   DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3
   DOUBLE PRECISION :: alpha(3) !(xyz)
   
-  DOUBLE PRECISION :: dip_i(nat/3, 3) !Molecular dipole moments. (nmol, xyz)
-  DOUBLE PRECISION :: dip_der_i(nat/3, nat, 3, 3) !Gradients of molecular dipole moments. (nmol, natoms, xyz, xyz)
+  DOUBLE PRECISION :: dip_der_full(nat, 3, 3) !Gradient of dipole moment. (natoms, xyz, xyz)
+  DOUBLE PRECISION :: pol_i(nat/3, 3, 3) !Molecular polarizabilities. (nmol, xyz)
 
   DOUBLE PRECISION :: atoms_charged(nat, 3) !List of atoms, with O replaced by M site ('charged atoms'). (natoms, xyz)
   DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
 
-  DOUBLE PRECISION :: E_stat(nat/3, 3) !(nmol, xyz)
-  DOUBLE PRECISION :: dEdr(nat/3, nat, 3, 3) !(nmol, nat, xyz, xyz)
+  DOUBLE PRECISION :: dip_ind(3) !(nmol, xyz)
+  DOUBLE PRECISION :: dip_ind_der(nat, 3, 3) !(nmol, nat, xyz, xyz)
+  DOUBLE PRECISION :: T_tnsr(nat/3, nat/3, 3, 3) !(nmol, nmol, xyz, xyz)
   INTEGER :: i, iatom, k
   
   !Molecular polarizability.
@@ -79,62 +81,63 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
      ro((i-1)/3 + 1, :) = atoms(i, :)
   ENDDO
   
-  !Coordinate-dependent quantities: E_stat and dEdr. This is where we worry about Ewald summation.
-  CALL calc_el_field(E_stat, dEdr)
+  !Coordinate-dependent quantities: dip_ind and dip_ind_der. This is where we worry about Ewald summation.
+  CALL calc_induced_part(dip_ind, dip_ind_der, T_tnsr)
 
   DO i=1, nat/3
-     iatom = 3*(i-1) + 1
-     !Calculate dipole of i-th molecule. Using scaled charges for permanent dipole according to Hamm.
-     dip_i(i, :) = calc_dipole(atoms_charged(iatom:iatom+2, :), charges / 1.3d0, E_stat(i, :))
      !Gradient of the i-th dipole moment.
-     IF (compute_der) THEN
-        dip_der_i(i, :, : ,:) = calc_dipole_derivative(charges / 1.3d0, dEdr(i, :, :, :), i)
-     ELSE
-        dip_der_i(i, :, :, :) = 0.0d0
-     ENDIF
+     pol_i(i, :, :) = calc_polarizability(T_tnsr(i, :, :, :))
   ENDDO
+  IF (compute_der) THEN
+     dip_der_full(:, : ,:) = calc_dipole_derivative(charges / 1.3d0, dip_ind_der)
+  ELSE
+     dip_der_full(:, :, :) = 0.0d0
+  ENDIF
   
-  dip = SUM(dip_i, DIM=1)
-  dip_der = SUM(dip_der_i(:, :, 3, :), DIM=1)
+  !Calculate total dipole moment. Using scaled charges for permanent dipole according to Hamm.
+  dip(:) = calc_dipole(atoms_charged, charges / 1.3d0, dip_ind)
+  dip_der = dip_der_full(:, 3, :)
+  pol = SUM(pol_i, DIM=1)
 
  CONTAINS
 
-  SUBROUTINE calc_el_field(E_stat, dEdr)
+  SUBROUTINE calc_induced_part(dip_ind, dip_ind_der, T_tnsr)
 
-    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), dEdr(nat/3, nat, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), T_tnsr(nat/3, nat/3, 3, 3)
 
     DOUBLE PRECISION :: a, rcut
 
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
     !----------------------------------------------
+    !rcut = 1.5d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
     rcut = 1.5d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
     a = pi/rcut
 
     !----------------------------------------------
     ! Short-range part - sum over pairs.
     !----------------------------------------------
-    CALL short_range_ew(atoms_charged, ro, a, rcut, E_stat, dEdr)
+    CALL short_range_ew(atoms_charged, ro, a, rcut, dip_ind, dip_ind_der, T_tnsr)
 
     !----------------------------------------------
     ! Long-range part - performs sum in k space.
     !----------------------------------------------
-    CALL long_range_ew(atoms_charged, ro, a, E_stat, dEdr)
+    CALL long_range_ew(atoms_charged, ro, a, dip_ind, dip_ind_der)
 
-  END SUBROUTINE calc_el_field
+  END SUBROUTINE calc_induced_part
 
-  SUBROUTINE short_range_ew(r, ro, a, rcut, E_stat, dEdr)
+  SUBROUTINE short_range_ew(r, ro, a, rcut, dip_ind, dip_ind_der, T_tnsr_o)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a, rcut 
-    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), dEdr(nat/3, nat, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), T_tnsr_o(nat/3, nat/3, 3, 3)
 
-    INTEGER :: i, j, k, jatom, nx, ny, nz, nmax
-    DOUBLE PRECISION :: r_ij_0(3), r_ij(3), dr, dr2, dr3, rcut2, screen, a_dr, gauss_part, T_tnsr(3, 3)
+    INTEGER :: i, j, k, l, jatom, nx, ny, nz, nmax
+    DOUBLE PRECISION :: r_ij_0(3), r_ij(3), dr, dr2, dr3, rcut2, screen, a_dr, gauss_part, T_tnsr(3, 3), T_tnsr_tmp(3, 3)
     LOGICAL :: self_term
 
     nmax=NINT(rcut/MINVAL(box))
-    E_stat = 0.0d0
-    dEdr = 0.0d0
+    dip_ind = 0.0d0
+    dip_ind_der = 0.0d0
     rcut2 = rcut**2
     DO i = 1, nat/3
        iatom = 3 * (i - 1) + 1
@@ -160,12 +163,16 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
                          screen = short_range_ew_screen(a_dr, gauss_part, self_term)
                          ! Contribution to the T tensor for given i, j, k, n (used for dipole derivative).
                          IF (compute_der) THEN
-                            T_tnsr = T_tnsr + charges(k) * short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                            !T_tnsr = T_tnsr + charges(k) * short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                            T_tnsr_tmp = charges(k) * short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                            DO l = 1, 3
+                               T_tnsr(l, :) = T_tnsr(l, :) + alpha(l) * T_tnsr_tmp(l, :)
+                            ENDDO
                          ENDIF
                          !--------------------------------------------------------------------------------------
                          ! Contribution to the electric field of molecule i from atom k in molecule j in cell n.
                          !--------------------------------------------------------------------------------------
-                         E_stat(i, :) = E_stat(i, :) + charges(k) * r_ij(:) / dr3 * screen
+                         dip_ind(:) = dip_ind(:) + alpha * charges(k) * r_ij(:) / dr3 * screen
                          !--------------------------------------------------------------------------------------
                          !--------------------------------------------------------------------------------------
                       ENDIF
@@ -177,12 +184,37 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
              !--------------------------------------------------------------------------------------------------------
              IF (compute_der) THEN
                 !Sum for i-th oxygen atom.
-                dEdr(i, iatom, :, :) =  dEdr(i, iatom, :, :) + T_tnsr(:, :)
+                dip_ind_der(iatom, :, :) =  dip_ind_der(iatom, :, :) + T_tnsr(:, :)
                 !Derivative of electric field at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
-                CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), T_tnsr(:, :), k)
+                CALL dip_ind_der_ij(dip_ind_der(jatom + 1: jatom + 3, :, :), T_tnsr(:, :), k)
              ENDIF
              !--------------------------------------------------------------------------------------------------------
              !--------------------------------------------------------------------------------------------------------
+          ENDDO
+       ENDDO
+    ENDDO
+
+    T_tnsr_o = 0.0d0
+    DO i = 1, nat/3
+       DO j = 1, nat/3
+          r_ij_0(:) = ro(i,:) - ro(j, :)
+          r_ij_0(:) = r_ij_0(:) - box(:) * NINT(r_ij_0(:)/box(:))
+          DO nx = -nmax, nmax
+             DO ny = -nmax, nmax
+                DO nz = -nmax, nmax
+                   r_ij(:) = r_ij_0(:) - box(:) * (/nx, ny, nz/) 
+                   dr2 = SUM(r_ij**2)
+                   self_term = (i .EQ. j) .AND. (nx .EQ. 0) .AND. (ny .EQ. 0).AND. (nz .EQ. 0)
+                   IF (dr2 .LT. rcut2 .AND. (.NOT. self_term)) THEN
+                      dr = SQRT(dr2)
+                      dr3 = dr*dr2
+                      T_tnsr_o(i, j, :, :) = -3.0d0 * outer(r_ij, r_ij) / (dr3 * dr2)
+                      DO k = 1, 3
+                         T_tnsr_o(i, j, k, k) = T_tnsr_o(i, j, k, k) + 1.0d0 / dr3
+                      ENDDO
+                   ENDIF
+                ENDDO
+             ENDDO
           ENDDO
        ENDDO
     ENDDO
@@ -216,14 +248,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
 
   END FUNCTION short_range_T_tnsr
 
-  SUBROUTINE long_range_ew(r, ro, a, E_stat, dEdr)
+  SUBROUTINE long_range_ew(r, ro, a, dip_ind, dip_ind_der)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a    
-    DOUBLE PRECISION, INTENT(INOUT) :: E_stat(nat/3, 3), dEdr(nat/3, nat, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3)
 
-    INTEGER :: i, j, k, jatom, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), re_part
-    DOUBLE COMPLEX :: sk_i(nat), sk, exp_ikr(nat/3), tmp(nat/3)
+    INTEGER :: i, k, l, kx, ky, kz, kmax
+    DOUBLE PRECISION :: b, f, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3)
+    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nat/3), sk, sk_o(3)
 
     kmax = INT(a * MAXVAL(box))
     lat(:) = twopi/box(:) 
@@ -240,28 +272,29 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
           DO kz = -kmax,kmax
              rk(3) = lat(3)*kz
              rk2 = SUM(rk(:)**2)
-             IF(compute_der) rk_out = outer(rk, rk)
              IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
                 sk_i = f * (EXP(-b*rk2) / rk2) * q * EXP(-IU * k_dot_r(nat, rk, r))
-                sk = SUM(sk_i)
                 exp_ikr = EXP(IU * k_dot_r(nat/3, rk, ro))
-                tmp(:) = exp_ikr(:) * SUM(sk_i)
-                DO i = 1, nat/3
-                   iatom = 3 * (i-1) + 1
-                   E_stat(i,:) = E_stat(i, :) + rk(:)  * AIMAG(tmp(i))
-                   IF (compute_der) THEN
+                sk = SUM(sk_i)
+                sk_o = alpha * SUM(exp_ikr)
+                dip_ind(:) = dip_ind(:) + rk(:)  * AIMAG(sk_o * sk)
+                IF (compute_der) THEN
+                   rk_out = outer(rk, rk)
+                   DO i = 1, nat/3
+                      iatom = 3 * (i-1) + 1
                       !Sum for i-th oxygen atom.
-                      dEdr(i, iatom, :, :) = dEdr(i, iatom, :, :) + rk_out(:, :) * REAL(tmp(i), KIND=KIND(1.0d0))
-                      DO j = 1, nat/3
-                         jatom = 3 * (j-1)
-                         DO k = 1, 3
-                            !Derivatives with respect to atom k of molecule j.
-                            re_part = REAL(exp_ikr(i) * sk_i(jatom + k), KIND=KIND(1.0d0))
-                            CALL el_field_der_ij(dEdr(i, jatom + 1: jatom + 3, :, :), re_part * rk_out(:, :), k)
-                         ENDDO
+                      DO l = 1, 3
+                         dip_ind_der(iatom, l, :) = dip_ind_der(iatom, l, :) + alpha(l) * rk_out(l, :) * REAL(exp_ikr(i) * sk, KIND=KIND(1.0d0))
                       ENDDO
-                   ENDIF
-                ENDDO
+                      !Derivatives with respect to atom k of molecule j.
+                      DO k = 1, 3
+                         DO l = 1, 3
+                            tnsr_tmp(l, :) = REAL(sk_o(l) * sk_i(iatom + k - 1), KIND=KIND(1.0d0)) * rk_out(l, :)
+                         ENDDO
+                         CALL dip_ind_der_ij(dip_ind_der(iatom: iatom + 2, :, :), tnsr_tmp, k)
+                      ENDDO
+                   ENDDO
+                ENDIF
              ENDIF
           ENDDO
        ENDDO
@@ -269,7 +302,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
 
   END SUBROUTINE long_range_ew
 
-  SUBROUTINE el_field_der_ij(dEi_drj, tnsr, k)
+  SUBROUTINE dip_ind_der_ij(dEi_drj, tnsr, k)
 
     DOUBLE PRECISION, INTENT(INOUT) :: dEi_drj(3, 3, 3)
     DOUBLE PRECISION, INTENT(IN) :: tnsr(3, 3)
@@ -289,49 +322,71 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der)
        dEi_drj(k, :, :) = dEi_drj(k, :, :) - tnsr(:, :)
     ENDIF   
 
-  END SUBROUTINE el_field_der_ij
+  END SUBROUTINE dip_ind_der_ij
 
-  FUNCTION calc_dipole(atoms, charges, E_stat)
+  FUNCTION calc_dipole(atoms, charges, dip_ind)
 
-    DOUBLE PRECISION, INTENT(IN) :: atoms(3,3), charges(3), E_stat(3)
+    DOUBLE PRECISION, INTENT(IN) :: atoms(nat,3), charges(3), dip_ind(3)
 
     DOUBLE PRECISION :: calc_dipole(3)
 
-    INTEGER :: k
+    INTEGER :: i, iatom, k
 
     calc_dipole = 0.0d0
     !Permanent dipoles.
-    DO k = 1, 3
-       calc_dipole(:) = calc_dipole(:) + charges(k) * atoms(k, :) 
+    DO i = 1, nat/3
+       iatom = 3 * (i - 1)
+       DO k = 1, 3
+          calc_dipole(:) = calc_dipole(:) + charges(k) * atoms(iatom + k, :) 
+       ENDDO
+       !Induced dipoles from electrostatic interaction with charges on other water molecules.
     ENDDO
-    !Induced dipoles from electrostatic interaction with charges on other water molecules.
-    calc_dipole(:) = calc_dipole(:) + alpha * E_stat
+    calc_dipole(:) = calc_dipole(:) + dip_ind(:)
 
   END FUNCTION calc_dipole
 
-  FUNCTION calc_dipole_derivative(charges, dEdr, i) RESULT(dip_der)
+  FUNCTION calc_dipole_derivative(charges, dip_ind_der) RESULT(dip_der)
 
     DOUBLE PRECISION, INTENT(IN) :: charges(3)
-    DOUBLE PRECISION, INTENT(IN) :: dEdr(nat, 3, 3)
-    INTEGER, INTENT(IN) :: i
+    DOUBLE PRECISION, INTENT(IN) :: dip_ind_der(nat, 3, 3)
 
     DOUBLE PRECISION :: dip_der(nat, 3, 3)
 
-    INTEGER :: iatom, j, k
+    INTEGER :: iatom, i, k
 
     dip_der = 0.0d0
-    iatom = 3 * (i - 1) + 1
-    DO k = 1, 3
-       !Gradient of the permanent molecular dipole moment.
-       dip_der(iatom, k, k) = gam * charges(1) !i-th oxygen.
-       dip_der(iatom+1:iatom+2, k, k) = charges(2) + gam2 * charges(1) !i-th hydrogen.
-       !Multiply induced part of dipole derivative by alpha.
-       DO j = 1, nat
-          dip_der(j, k, :) = dip_der(j, k, :) + alpha(k) * dEdr(j, k, :)
+    DO i=1, nat/3
+       iatom = 3 * (i - 1) + 1
+       DO k = 1, 3
+          !Gradient of the permanent molecular dipole moment.
+          dip_der(iatom, k, k) = dip_der(iatom, k, k) + gam * charges(1) !i-th oxygen.
+          dip_der(iatom+1:iatom+2, k, k) = dip_der(iatom+1:iatom+2, k, k) + charges(2) + gam2 * charges(1) !i-th hydrogen.
        ENDDO
+    ENDDO
+    !Multiply induced part of dipole derivative by alpha.
+    DO k = 1, 3
+       dip_der(:, k, :) = dip_der(:, k, :) + dip_ind_der(:, k, :)
     ENDDO
 
   END FUNCTION calc_dipole_derivative
+
+  FUNCTION calc_polarizability(T_tnsr) RESULT(pol)
+
+    DOUBLE PRECISION, INTENT(IN) :: T_tnsr(nat/3, 3,3)
+
+    DOUBLE PRECISION :: pol(3, 3)
+
+    INTEGER :: j, k
+
+    pol = 0.0d0
+    DO k = 1, 3
+       !pol(k, k) = pol(k, k) + alpha(k)
+       DO j = 1, nat/3
+          pol(k, :) = pol(k, :) + alpha(k) * T_tnsr(j, k, :) * alpha(:)
+       ENDDO
+    ENDDO
+
+  END FUNCTION calc_polarizability
 
   FUNCTION k_dot_r(n, k, r)
 
