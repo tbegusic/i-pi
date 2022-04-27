@@ -103,7 +103,6 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
     !----------------------------------------------
-    !rcut = 1.5d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
     rcut = 1.5d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
     a = pi/rcut
 
@@ -115,7 +114,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     !----------------------------------------------
     ! Long-range part - performs sum in k space.
     !----------------------------------------------
-    CALL long_range_ew(atoms_charged, ro, a, dip_ind, dip_ind_der)
+    CALL long_range_ew(atoms_charged, ro, a, dip_ind, dip_ind_der, pol_ind)
 
   END SUBROUTINE calc_induced_part
 
@@ -206,6 +205,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                       DO k = 1, 3
                          T_tnsr(k, k) = T_tnsr(k, k) + 1.0d0 / dr3
                       ENDDO
+                      !a_dr = a * dr
+                      !gauss_part = 2.0d0 / sqrtpi * a_dr * EXP(-a_dr**2)
+                      !screen = short_range_ew_screen(a_dr, gauss_part, .FALSE.)
+                      !T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
                    ENDIF
                 ENDDO
              ENDDO
@@ -245,10 +248,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION short_range_T_tnsr
 
-  SUBROUTINE long_range_ew(r, ro, a, dip_ind, dip_ind_der)
+  SUBROUTINE long_range_ew(r, ro, a, dip_ind, dip_ind_der, pol_ind)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a    
-    DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
     INTEGER :: i, k, l, kx, ky, kz, kmax
     DOUBLE PRECISION :: b, f, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3)
@@ -292,6 +295,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                       ENDDO
                    ENDDO
                 ENDIF
+                !DO l = 1, 3
+                !   pol_ind(l, :) = pol_ind(l, :) + f * EXP(-b*rk2) / rk2 * ABS(sk_o(l)) * rk_out(l, :) * ABS(sk_o(:))
+                !ENDDO
              ENDIF
           ENDDO
        ENDDO
@@ -377,7 +383,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     pol = 0.0d0
     DO k = 1, 3
-       !pol(k, k) = pol(k, k) + alpha(k)
+    !   pol(k, k) = pol(k, k) + alpha(k)
     ENDDO
     pol = pol + pol_ind 
 
