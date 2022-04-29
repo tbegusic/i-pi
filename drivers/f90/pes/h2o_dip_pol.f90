@@ -186,6 +186,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
        ENDDO
     ENDDO
 
+    
+    !rcut2 = 9 * rcut2
+    !nmax=NINT(3*rcut/MINVAL(box))
     pol_ind = 0.0d0
     DO i = 1, nat/3
        DO j = 1, nat/3
@@ -201,10 +204,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                    IF (dr2 .LT. rcut2 .AND. (.NOT. self_term)) THEN
                       dr = SQRT(dr2)
                       dr3 = dr*dr2
-                      T_tnsr(:, :) = T_tnsr(:, :) - 3.0d0 * outer(r_ij, r_ij) / (dr3 * dr2)
-                      DO k = 1, 3
-                         T_tnsr(k, k) = T_tnsr(k, k) + 1.0d0 / dr3
-                      ENDDO
+                      T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, 0.0d0, 0.0d0, 1.0d0)
                       !a_dr = a * dr
                       !gauss_part = 2.0d0 / sqrtpi * a_dr * EXP(-a_dr**2)
                       !screen = short_range_ew_screen(a_dr, gauss_part, .FALSE.)
@@ -213,6 +213,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 ENDDO
              ENDDO
           ENDDO
+          !IF (i .EQ. j) THEN
+          !   DO k = 1, 3
+          !      T_tnsr(k, k) = T_tnsr(k, k) - 4.0d0 * a**3 / (3.0d0 * sqrtpi)
+          !   ENDDO
+          !ENDIF
           DO k = 1, 3
              pol_ind(k, :) = pol_ind(k, :) + alpha(k) * T_tnsr(k, :) * alpha(:)
           ENDDO
@@ -299,6 +304,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 !   pol_ind(l, :) = pol_ind(l, :) + f * EXP(-b*rk2) / rk2 * ABS(sk_o(l)) * rk_out(l, :) * ABS(sk_o(:))
                 !ENDDO
              ENDIF
+             !IF (rk2 .LT. EPSILON(0.0d0)) THEN
+             !   DO l = 1, 3
+             !      pol_ind(l, l) = pol_ind(l, l) + 4.0d0 * pi / PRODUCT(box) * (nat / 3.0d0 * alpha(l))**2
+             !   ENDDO
+             !ENDIF 
           ENDDO
        ENDDO
     ENDDO
