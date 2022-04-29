@@ -665,15 +665,13 @@
                   !Step greater than number of equilibrium dynamics steps, so we mark that we
                   !are now doing neq dynamics and reset counter/step to zero.
                   neq = .TRUE.
-                  counter = 0
-                  step = 0
+                  counter = 0; step = 0
                ELSEIF ((step .GT. nsteps_neq) .AND. neq) THEN
                   !Step greater than number of nonequilibrium dynamics steps, so we reset counter/step to zero.
-                  counter = 0
-                  step = 0
+                  counter = 0; step = 0
                ENDIF
-               compute_dip = MOD(step, dipole_freq) .EQ. 0
-               compute_der = (MOD(step, der_freq) .EQ. 0) .AND. (.NOT. neq)
+               compute_dip = MOD(step, dipole_freq) .EQ. 0                  !Check if we should compute dipole (and polarizability).
+               compute_der = (MOD(step, der_freq) .EQ. 0) .AND. (.NOT. neq) !Check if we should compute dipole derivative.
                IF (compute_dip .OR. compute_der) THEN
                   CALL h2o_dipole(vpars(1:3), nat, atoms, compute_der, dip, dip_der, polar)
                ELSE

@@ -192,7 +192,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     a3_self_term = 4.0d0 * a**3 / (3.0d0 * sqrtpi)
     pol_ind = 0.0d0
     DO i = 1, nmol
-       DO j = 1, nmol
+       DO j = i, nmol
           r_ij_0(:) = ro(i,:) - ro(j, :)
           r_ij_0(:) = r_ij_0(:) - box(:) * NINT(r_ij_0(:)/box(:))
           T_tnsr = 0.0d0
@@ -210,11 +210,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 ENDDO
              ENDDO
           ENDDO
-          !Self-term, include one for each value of i. 
           IF (i .EQ. j) THEN
+             !Self term, include one for each value of i. 
              DO k = 1, 3
                 T_tnsr(k, k) = T_tnsr(k, k) - a3_self_term
              ENDDO
+          ELSE
+             !Not a self term, so we have to multiply by 2, to correct for including only j>i.
+             T_tnsr = T_tnsr * 2.0d0
           ENDIF
           !Multiply computed tensor by alpha and add to system's polarizability.
           DO k = 1, 3
