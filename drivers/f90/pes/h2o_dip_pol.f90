@@ -52,6 +52,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
   DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3
 
+  INTEGER :: nmol
+
   DOUBLE PRECISION :: alpha(3) !(xyz)
   DOUBLE PRECISION :: atoms_charged(nat, 3) !List of atoms, with O replaced by M site ('charged atoms'). (natoms, xyz)
   DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
@@ -60,8 +62,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION :: dip_ind(3) !(nmol, xyz)
   DOUBLE PRECISION :: dip_ind_der(nat, 3, 3) !(nmol, nat, xyz, xyz)
   DOUBLE PRECISION :: pol_ind(3, 3) !(nmol, nmol, xyz, xyz)
-  INTEGER :: i, iatom, k
+  INTEGER :: i, k
   
+  !Number of molecules.
+  nmol = nat / 3
+
   !Molecular polarizability.
   alpha = a_iso
   
@@ -120,20 +125,21 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   SUBROUTINE short_range_ew(r, ro, a, rcut, dip_ind, dip_ind_der, pol_ind)
 
-    DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a, rcut 
+    DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a, rcut 
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
-    INTEGER :: i, j, k, l, jatom, nx, ny, nz, nmax
-    DOUBLE PRECISION :: r_ij_0(3), r_ij(3), dr, dr2, dr3, rcut2, screen, a_dr, gauss_part, T_tnsr(3, 3)
+    INTEGER :: i, j, k, l, iatom, jatom, nx, ny, nz, nmax
+    DOUBLE PRECISION :: r_ij_0(3), r_ij(3), dr, dr2, dr3, rcut2, screen, a_dr, gauss_part, T_tnsr(3, 3), a3_self_term, prefac
     LOGICAL :: self_term
 
     nmax=NINT(rcut/MINVAL(box))
     dip_ind = 0.0d0
     dip_ind_der = 0.0d0
     rcut2 = rcut**2
-    DO i = 1, nat/3
+    prefac = 2.0d0 / sqrtpi
+    DO i = 1, nmol
        iatom = 3 * (i - 1) + 1
-       DO j = 1, nat/3
+       DO j = 1, nmol
           jatom = 3 * (j - 1)
           DO k = 1, 3
              T_tnsr = 0.0d0
@@ -147,22 +153,16 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                       dr2 = SUM(r_ij**2)
                       IF (dr2 .LT. rcut2) THEN
                          ! Helper variables that are used more than once or convenient to compute separately.
-                         dr = SQRT(dr2)
-                         dr3 = dr*dr2
                          self_term = (i .EQ. j) .AND. (nx .EQ. 0) .AND. (ny .EQ. 0).AND. (nz .EQ. 0)
-                         a_dr = a * dr
-                         gauss_part = 2.0d0 / sqrtpi * a_dr * EXP(-a_dr**2)
-                         screen = short_range_ew_screen(a_dr, gauss_part, self_term)
+                         CALL compute_helper_vars(a, dr2, prefac, self_term, dr, dr3, a_dr, gauss_part, screen)
                          ! Contribution to the T tensor for given i, j, k, n (used for dipole derivative).
-                         IF (compute_der) THEN
-                            T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
-                         ENDIF
-                         !--------------------------------------------------------------------------------------
-                         ! Contribution to the electric field of molecule i from atom k in molecule j in cell n.
-                         !--------------------------------------------------------------------------------------
+                         IF (compute_der) T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                         !--------------------------------------------------------------------------------------------
+                         ! Contribution to the dipole moment of molecule i induced by atom k in molecule j in cell n.
+                         !--------------------------------------------------------------------------------------------
                          dip_ind(:) = dip_ind(:) + alpha * charges(k) * r_ij(:) / dr3 * screen
-                         !--------------------------------------------------------------------------------------
-                         !--------------------------------------------------------------------------------------
+                         !--------------------------------------------------------------------------------------------
+                         !--------------------------------------------------------------------------------------------
                       ENDIF
                    ENDDO
                 ENDDO
@@ -186,15 +186,17 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
        ENDDO
     ENDDO
 
-    
-    !rcut2 = 9 * rcut2
-    !nmax=NINT(3*rcut/MINVAL(box))
+    !--------------------------------------------------------------------------------------------------------
+    ! Compute induced part of the polarizability.
+    !--------------------------------------------------------------------------------------------------------
+    a3_self_term = 4.0d0 * a**3 / (3.0d0 * sqrtpi)
     pol_ind = 0.0d0
-    DO i = 1, nat/3
-       DO j = 1, nat/3
+    DO i = 1, nmol
+       DO j = 1, nmol
           r_ij_0(:) = ro(i,:) - ro(j, :)
           r_ij_0(:) = r_ij_0(:) - box(:) * NINT(r_ij_0(:)/box(:))
           T_tnsr = 0.0d0
+          !Sum over cells and consider only non-self terms.
           DO nx = -nmax, nmax
              DO ny = -nmax, nmax
                 DO nz = -nmax, nmax
@@ -202,29 +204,43 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                    dr2 = SUM(r_ij**2)
                    self_term = (i .EQ. j) .AND. (nx .EQ. 0) .AND. (ny .EQ. 0).AND. (nz .EQ. 0)
                    IF (dr2 .LT. rcut2 .AND. (.NOT. self_term)) THEN
-                      dr = SQRT(dr2)
-                      dr3 = dr*dr2
-                      T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, 0.0d0, 0.0d0, 1.0d0)
-                      !a_dr = a * dr
-                      !gauss_part = 2.0d0 / sqrtpi * a_dr * EXP(-a_dr**2)
-                      !screen = short_range_ew_screen(a_dr, gauss_part, .FALSE.)
-                      !T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
+                      CALL compute_helper_vars(a, dr2, prefac, .FALSE., dr, dr3, a_dr, gauss_part, screen)
+                      T_tnsr = T_tnsr + short_range_T_tnsr(r_ij, dr2, dr3, a_dr, gauss_part, screen)
                    ENDIF
                 ENDDO
              ENDDO
           ENDDO
-          !IF (i .EQ. j) THEN
-          !   DO k = 1, 3
-          !      T_tnsr(k, k) = T_tnsr(k, k) - 4.0d0 * a**3 / (3.0d0 * sqrtpi)
-          !   ENDDO
-          !ENDIF
+          !Self-term, include one for each value of i. 
+          IF (i .EQ. j) THEN
+             DO k = 1, 3
+                T_tnsr(k, k) = T_tnsr(k, k) - a3_self_term
+             ENDDO
+          ENDIF
+          !Multiply computed tensor by alpha and add to system's polarizability.
           DO k = 1, 3
              pol_ind(k, :) = pol_ind(k, :) + alpha(k) * T_tnsr(k, :) * alpha(:)
           ENDDO
        ENDDO
     ENDDO
+    !--------------------------------------------------------------------------------------------------------
+    !--------------------------------------------------------------------------------------------------------
 
   END SUBROUTINE short_range_ew
+
+  SUBROUTINE compute_helper_vars(a, dr2, prefac, self_term, dr, dr3, a_dr, gauss_part, screen)
+
+    DOUBLE PRECISION, INTENT(IN) :: a, dr2, prefac
+    LOGICAL, INTENT(IN) :: self_term
+    DOUBLE PRECISION, INTENT(OUT) :: dr, dr3, a_dr, gauss_part, screen
+
+    ! Helper variables for real-space summation:
+    dr = SQRT(dr2)                                                  !Absolute value of distance.
+    dr3 = dr*dr2                                                    !dr cubed.
+    a_dr = a * dr                                                   !a * dr.
+    gauss_part = prefac * a_dr * EXP(-a_dr**2)                      !Gaussian multiplied by a_dr and the prefactor.
+    screen = short_range_ew_screen(a_dr, gauss_part, self_term)     !screen term equal to erfc(x) + gauss_part (-1 if self term).
+
+  END SUBROUTINE compute_helper_vars
 
   FUNCTION short_range_ew_screen(a_r, gauss_part, self_term) RESULT(sc)
 
@@ -255,22 +271,23 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   SUBROUTINE long_range_ew(r, ro, a, dip_ind, dip_ind_der, pol_ind)
 
-    DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nat/3, 3), a    
+    DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a    
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
-    INTEGER :: i, k, l, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3)
-    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nat/3), sk, sk_o(3)
+    INTEGER :: i, k, l, iatom, kx, ky, kz, kmax
+    DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, zero_k_term(3)
+    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3)
 
     kmax = INT(a * MAXVAL(box))
     lat(:) = twopi/box(:) 
     rkmax2 = (twopi * a)**2
     b = 0.25d0/(a**2)
-    f = 4.0d0 * pi / PRODUCT(box)     ! 4pi / V !
-    q(:) = PACK(SPREAD(charges(:), 2, nat/3), .TRUE.)
+    f = 4.0d0 * pi / PRODUCT(box) ! 4pi / V !
+    f_mod = f
+    q(:) = PACK(SPREAD(charges(:), 2, nmol), .TRUE.)
 
     DO kx = 0,kmax
-       IF (kx .EQ. 1) f = 2.d0*f
+       IF (kx .EQ. 1) f_mod = 2.d0*f
        rk(1) = lat(1)*kx
        DO ky = -kmax,kmax
           rk(2) = lat(2)*ky
@@ -278,14 +295,26 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
              rk(3) = lat(3)*kz
              rk2 = SUM(rk(:)**2)
              IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
-                sk_i = f * (EXP(-b*rk2) / rk2) * q * EXP(-IU * k_dot_r(nat, rk, r))
-                exp_ikr = EXP(IU * k_dot_r(nat/3, rk, ro))
-                sk = SUM(sk_i)
-                sk_o = alpha * SUM(exp_ikr)
-                dip_ind(:) = dip_ind(:) + rk(:)  * AIMAG(sk_o * sk)
+                !Helper variables:
+                prefac = f_mod * EXP(-b*rk2) / rk2         !Prefactor common to all properties.
+                sk_i = q * EXP(-IU * k_dot_r(nat, rk, r))  !charge(i) * exp(i k r_i), where r_i are charged sites.
+                sk = SUM(sk_i)                             !Structure factor for the charged sites.
+                exp_ikr = EXP(IU * k_dot_r(nmol, rk, ro))  !exp(i k r_o), where r_o are oxygen atoms.
+                sk_o = alpha * SUM(exp_ikr)                !Structure factor for the oxygen atoms.
+
+                !--------------------------------------------------------------------------------------------
+                ! Contribution to the induced dipole moment of the system.
+                !--------------------------------------------------------------------------------------------
+                dip_ind = dip_ind + prefac * AIMAG(sk_o * sk) * rk
+                !--------------------------------------------------------------------------------------------
+                !--------------------------------------------------------------------------------------------
+
+                !--------------------------------------------------------------------------------------------
+                ! Contribution to the derivative of the induced dipole moment of the system.
+                !--------------------------------------------------------------------------------------------
                 IF (compute_der) THEN
-                   rk_out = outer(rk, rk)
-                   DO i = 1, nat/3
+                   rk_out = prefac * outer(rk, rk)
+                   DO i = 1, nmol
                       iatom = 3 * (i-1) + 1
                       !Sum for i-th oxygen atom.
                       DO l = 1, 3
@@ -300,24 +329,34 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                       ENDDO
                    ENDDO
                 ENDIF
-                !DO l = 1, 3
-                !   pol_ind(l, :) = pol_ind(l, :) + f * EXP(-b*rk2) / rk2 * ABS(sk_o(l)) * rk_out(l, :) * ABS(sk_o(:))
-                !ENDDO
+                !--------------------------------------------------------------------------------------------
+                !--------------------------------------------------------------------------------------------
+
+                !--------------------------------------------------------------------------------------------
+                ! Contribution to the induced polarizability of the system.
+                !--------------------------------------------------------------------------------------------
+                pol_ind = pol_ind + prefac * outer_self(ABS(sk_o) * rk)
+                !--------------------------------------------------------------------------------------------
+                !--------------------------------------------------------------------------------------------
              ENDIF
-             !IF (rk2 .LT. EPSILON(0.0d0)) THEN
-             !   DO l = 1, 3
-             !      pol_ind(l, l) = pol_ind(l, l) + 4.0d0 * pi / PRODUCT(box) * (nat / 3.0d0 * alpha(l))**2
-             !   ENDDO
-             !ENDIF 
           ENDDO
        ENDDO
     ENDDO
+    !--------------------------------------------------------------------------------------------------
+    ! Non-zero constant contribution to the induced polarizability of the system, from kx=ky=kz=0
+    !--------------------------------------------------------------------------------------------------
+    zero_k_term = f * (nmol * alpha)**2 / 3.0d0
+    DO l = 1, 3
+       pol_ind(l, l) = pol_ind(l, l) + zero_k_term(l) 
+    ENDDO
+    !--------------------------------------------------------------------------------------------
+    !--------------------------------------------------------------------------------------------
 
   END SUBROUTINE long_range_ew
 
-  SUBROUTINE dip_ind_der_ij(dEi_drj, tnsr, k)
+  SUBROUTINE dip_ind_der_ij(dmui_drj, tnsr, k)
 
-    DOUBLE PRECISION, INTENT(INOUT) :: dEi_drj(3, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: dmui_drj(3, 3, 3)
     DOUBLE PRECISION, INTENT(IN) :: tnsr(3, 3)
     INTEGER, INTENT(IN) :: k
 
@@ -325,14 +364,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     IF (k .EQ. 1) THEN
        !j-th molecule oxygen atom. Includes i==j term.
-       dEi_drj(k, :, :) = dEi_drj(k, :, :) - gam * tnsr(:, :)
+       dmui_drj(k, :, :) = dmui_drj(k, :, :) - gam * tnsr(:, :)
        !j-th molecule hydrogen atoms (part that comes from M site).
        DO h = 1, 2
-          dEi_drj(k + h, :, :) = dEi_drj(k + h, :, :) - gam2 * tnsr(:, :)
+          dmui_drj(k + h, :, :) = dmui_drj(k + h, :, :) - gam2 * tnsr(:, :)
        ENDDO
     ELSE
        !j-th molecule hydrogen atoms (part that comes from hydrogen atom positions).
-       dEi_drj(k, :, :) = dEi_drj(k, :, :) - tnsr(:, :)
+       dmui_drj(k, :, :) = dmui_drj(k, :, :) - tnsr(:, :)
     ENDIF   
 
   END SUBROUTINE dip_ind_der_ij
@@ -347,7 +386,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     calc_dipole = 0.0d0
     !Permanent dipoles.
-    DO i = 1, nat/3
+    DO i = 1, nmol
        iatom = 3 * (i - 1)
        DO k = 1, 3
           calc_dipole(:) = calc_dipole(:) + charges(k) * atoms(iatom + k, :) 
@@ -368,7 +407,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     INTEGER :: iatom, i, k
 
     dip_der = 0.0d0
-    DO i=1, nat/3
+    DO i=1, nmol
        iatom = 3 * (i - 1) + 1
        DO k = 1, 3
           !Gradient of the permanent molecular dipole moment.
@@ -417,7 +456,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   FUNCTION outer(a, b)
 
-    DOUBLE PRECISION :: a(3), b(3)
+    DOUBLE PRECISION, INTENT(IN) :: a(3), b(3)
 
     DOUBLE PRECISION :: outer(3,3)
 
@@ -428,6 +467,16 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     ENDDO
 
   END FUNCTION outer
+
+  FUNCTION outer_self(a)
+
+    DOUBLE PRECISION, INTENT(IN) :: a(3)
+
+    DOUBLE PRECISION :: outer_self(3,3)
+
+    outer_self  = outer(a, a)
+
+  END FUNCTION outer_self
 
 END SUBROUTINE h2o_dipole
 
