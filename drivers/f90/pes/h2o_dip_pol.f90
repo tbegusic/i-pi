@@ -51,6 +51,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: charges(3) = (/ qm, qh, qh /) !(n_charged_atom_per_mol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
   DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3
+  DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * 1.88973d0**3
 
   INTEGER :: nmol
 
@@ -101,12 +102,26 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   SUBROUTINE calc_alpha
 
-    INTEGER :: i, k
+    INTEGER :: i, iatom, k
+    DOUBLE PRECISION :: O(3, 3)
 
+    alpha = 0.0d0
     DO i = 1, nmol
+       iatom = 3 * (i - 1) + 1
+       !x-axis.
+       O(:, 1) = atoms(iatom + 1, :) - atoms(iatom + 2, :)
+       O(:, 1) = O(:, 1) / NORM2(O(:, 1))
+       !y-axis.
+       O(:, 2) = atoms(iatom, :) - atoms(iatom + 1, :)
+       O(:, 2) = O(:, 2) - DOT_PRODUCT(O(:, 2), O(:, 1)) * O(:, 1)
+       O(:, 2) = O(:, 2) / NORM2(O(:, 2))
+       !z-axis.
+       O(:, 3) = cross_product(O(:, 1), O(:, 2))
        DO k = 1, 3
-          alpha(i, k, k) = a_iso
+          !alpha(i, k, k) = a_iso           !Isotropic molecular polarizability.
+          alpha(i, k, k) = a_aniso(k)       !Anisotropic molecular polarizability.
        ENDDO
+       alpha(i, :, :) = MATMUL(MATMUL(O, alpha(i, :, :)), TRANSPOSE(O))
     ENDDO
 
   END SUBROUTINE calc_alpha
@@ -219,17 +234,16 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 ENDDO
              ENDDO
           ENDDO
+          !Multiply computed tensor by alpha and add to system's polarizability.
           IF (i .EQ. j) THEN
              !Self term, include one for each value of i. 
-             DO k = 1, 3
-                T_tnsr(k, k) = T_tnsr(k, k) - a3_self_term
-             ENDDO
+             pol_ind = pol_ind - a3_self_term * MATMUL(alpha(i, :, :), alpha(j, :, :))
           ELSE
-             !Not a self term, so we have to multiply by 2, to correct for including only j>i.
-             T_tnsr = T_tnsr * 2.0d0
+             !Not a self term, so we have to add also the transpose, to correct for including only j>i.
+             ! alpha_i * T_ij * alpha_j = (alpha_j * T_ji * alpha_i)^T
+             T_tnsr = MATMUL(MATMUL(alpha(i, :, :), T_tnsr), alpha(j, :, :))
+             pol_ind = pol_ind + T_tnsr + TRANSPOSE(T_tnsr)
           ENDIF
-          !Multiply computed tensor by alpha and add to system's polarizability.
-          pol_ind = pol_ind + MATMUL(MATMUL(alpha(i, :, :), T_tnsr), alpha(j, :, :))
        ENDDO
     ENDDO
     !--------------------------------------------------------------------------------------------------------
@@ -437,8 +451,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION :: pol(3, 3)
 
     pol = 0.0d0
-    !pol = SUM(alpha, DIM=1)
-    pol = pol + pol_ind 
+    pol = SUM(alpha, DIM=1)
+    pol = pol - pol_ind 
 
   END FUNCTION calc_polarizability
 
@@ -485,6 +499,18 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     ENDDO
 
   END FUNCTION outer_cmplx
+
+  FUNCTION cross_product(a, b) RESULT(c)
+
+    DOUBLE PRECISION, INTENT(IN) :: a(3), b(3)
+
+    DOUBLE PRECISION :: c(3)
+
+    c(1) = a(2) * b(3) - a(3) * b(2)
+    c(2) = a(3) * b(1) - a(1) * b(3)
+    c(3) = a(1) * b(2) - a(2) * b(1)
+
+  END FUNCTION cross_product
 
 END SUBROUTINE h2o_dipole
 
