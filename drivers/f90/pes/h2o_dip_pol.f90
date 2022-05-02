@@ -108,8 +108,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
     !----------------------------------------------
-    rcut = 1.5d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
-    a = pi/rcut
+    rcut = 1.3d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
+    a = 1.3d0 * pi/rcut
 
     !----------------------------------------------
     ! Short-range part - sum over pairs.
@@ -281,9 +281,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, zero_k_term(3)
     DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3)
 
-    kmax = INT(a * MAXVAL(box))
+    kmax = INT(1.3d0*a * MAXVAL(box))
     lat(:) = twopi/box(:) 
-    rkmax2 = (twopi * a)**2
+    rkmax2 = (1.3d0*twopi * a)**2
     b = 0.25d0/(a**2)
     f = 4.0d0 * pi / PRODUCT(box) ! 4pi / V !
     f_mod = f
