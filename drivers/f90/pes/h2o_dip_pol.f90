@@ -54,7 +54,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   INTEGER :: nmol
 
-  DOUBLE PRECISION :: alpha(3) !(xyz)
+  DOUBLE PRECISION :: alpha(nat/3, 3, 3) !(nmol, xyz, xyz)
   DOUBLE PRECISION :: atoms_charged(nat, 3) !List of atoms, with O replaced by M site ('charged atoms'). (natoms, xyz)
   DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
   DOUBLE PRECISION :: dip_der_full(nat, 3, 3) !Gradient of dipole moment. (natoms, xyz, xyz)
@@ -68,7 +68,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   nmol = nat / 3
 
   !Molecular polarizability.
-  alpha = a_iso
+  CALL calc_alpha
   
   !Charged atoms (Site M instead of oxygen) and oxygen atoms stored separately.
   atoms_charged = atoms
@@ -99,6 +99,18 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
  CONTAINS
 
+  SUBROUTINE calc_alpha
+
+    INTEGER :: i, k
+
+    DO i = 1, nmol
+       DO k = 1, 3
+          alpha(i, k, k) = a_iso
+       ENDDO
+    ENDDO
+
+  END SUBROUTINE calc_alpha
+
   SUBROUTINE calc_induced_part(dip_ind, dip_ind_der, pol_ind)
 
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
@@ -128,7 +140,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a, rcut 
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
-    INTEGER :: i, j, k, l, iatom, jatom, nx, ny, nz, nmax
+    INTEGER :: i, j, k, iatom, jatom, nx, ny, nz, nmax
     DOUBLE PRECISION :: r_ij_0(3), r_ij(3), dr, dr2, dr3, rcut2, screen, a_dr, gauss_part, T_tnsr(3, 3), a3_self_term, prefac
     LOGICAL :: self_term
 
@@ -160,7 +172,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                          !--------------------------------------------------------------------------------------------
                          ! Contribution to the dipole moment of molecule i induced by atom k in molecule j in cell n.
                          !--------------------------------------------------------------------------------------------
-                         dip_ind(:) = dip_ind(:) + alpha * charges(k) * r_ij(:) / dr3 * screen
+                         dip_ind(:) = dip_ind(:) + charges(k) * MATMUL(alpha(i, :, :), r_ij(:)) / dr3 * screen
                          !--------------------------------------------------------------------------------------------
                          !--------------------------------------------------------------------------------------------
                       ENDIF
@@ -171,10 +183,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
              ! Compute the derivative of the electric field of molecule i w.r.t. coordinates of atom k of molecule j.
              !--------------------------------------------------------------------------------------------------------
              IF (compute_der) THEN
-                DO l = 1, 3
-                   T_tnsr(l, :) =  alpha(l) * T_tnsr(l, :)
-                ENDDO
-                T_tnsr =  charges(k) * T_tnsr
+                T_tnsr =  charges(k) * MATMUL(alpha(i, :, :), T_tnsr)
                 !Sum for i-th oxygen atom.
                 dip_ind_der(iatom, :, :) =  dip_ind_der(iatom, :, :) + T_tnsr(:, :)
                 !Derivative of electric field at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
@@ -220,9 +229,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
              T_tnsr = T_tnsr * 2.0d0
           ENDIF
           !Multiply computed tensor by alpha and add to system's polarizability.
-          DO k = 1, 3
-             pol_ind(k, :) = pol_ind(k, :) + alpha(k) * T_tnsr(k, :) * alpha(:)
-          ENDDO
+          pol_ind = pol_ind + MATMUL(MATMUL(alpha(i, :, :), T_tnsr), alpha(j, :, :))
        ENDDO
     ENDDO
     !--------------------------------------------------------------------------------------------------------
@@ -277,9 +284,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a    
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
-    INTEGER :: i, k, l, iatom, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, zero_k_term(3)
-    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3)
+    INTEGER :: i, k, iatom, kx, ky, kz, kmax
+    DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, sum_alpha(3, 3) 
+    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3, 3), sk_o_times_rk(3)
 
     kmax = INT(1.3d0*a * MAXVAL(box))
     lat(:) = twopi/box(:) 
@@ -303,12 +310,15 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 sk_i = q * EXP(-IU * k_dot_r(nat, rk, r))  !charge(i) * exp(i k r_i), where r_i are charged sites.
                 sk = SUM(sk_i)                             !Structure factor for the charged sites.
                 exp_ikr = EXP(IU * k_dot_r(nmol, rk, ro))  !exp(i k r_o), where r_o are oxygen atoms.
-                sk_o = alpha * SUM(exp_ikr)                !Structure factor for the oxygen atoms.
+                sk_o = 0.0d0                               !Structure factor for the oxygen atoms.
+                DO i = 1, nmol
+                   sk_o = sk_o + alpha(i, :, :) * exp_ikr(i) 
+                ENDDO
 
                 !--------------------------------------------------------------------------------------------
                 ! Contribution to the induced dipole moment of the system.
                 !--------------------------------------------------------------------------------------------
-                dip_ind = dip_ind + prefac * AIMAG(sk_o * sk) * rk
+                dip_ind = dip_ind + prefac * AIMAG(sk * MATMUL(sk_o, rk))
                 !--------------------------------------------------------------------------------------------
                 !--------------------------------------------------------------------------------------------
 
@@ -320,15 +330,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                    DO i = 1, nmol
                       iatom = 3 * (i-1) + 1
                       !Sum for i-th oxygen atom.
-                      DO l = 1, 3
-                         dip_ind_der(iatom, l, :) = dip_ind_der(iatom, l, :) + alpha(l) * rk_out(l, :) * REAL(exp_ikr(i) * sk, KIND=KIND(1.0d0))
-                      ENDDO
+                      dip_ind_der(iatom, :, :) = dip_ind_der(iatom, :, :) + MATMUL(alpha(i, :, :), rk_out) * REAL(exp_ikr(i) * sk, KIND=KIND(1.0d0))
                       !Derivatives with respect to atom k of molecule j.
                       DO k = 1, 3
-                         DO l = 1, 3
-                            tnsr_tmp(l, :) = REAL(sk_o(l) * sk_i(iatom + k - 1), KIND=KIND(1.0d0)) * rk_out(l, :)
-                         ENDDO
-                         CALL dip_ind_der_ij(dip_ind_der(iatom: iatom + 2, :, :), tnsr_tmp, k)
+                         tnsr_tmp = REAL(sk_i(iatom + k - 1) * MATMUL(sk_o, rk_out), KIND=KIND(1.0d0))
+                         CALL dip_ind_der_ij(dip_ind_der(iatom : iatom + 2, :, :), tnsr_tmp, k)
                       ENDDO
                    ENDDO
                 ENDIF
@@ -338,7 +344,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 !--------------------------------------------------------------------------------------------
                 ! Contribution to the induced polarizability of the system.
                 !--------------------------------------------------------------------------------------------
-                pol_ind = pol_ind + prefac * outer_self(ABS(sk_o) * rk)
+                sk_o_times_rk = MATMUL(sk_o, rk)
+                pol_ind = pol_ind + prefac * REAL(outer_cmplx(sk_o_times_rk, CONJG(sk_o_times_rk)), KIND=KIND(1.0d0))
                 !--------------------------------------------------------------------------------------------
                 !--------------------------------------------------------------------------------------------
              ENDIF
@@ -348,10 +355,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     !--------------------------------------------------------------------------------------------------
     ! Non-zero constant contribution to the induced polarizability of the system, from kx=ky=kz=0
     !--------------------------------------------------------------------------------------------------
-    zero_k_term = f * (nmol * alpha)**2 / 3.0d0
-    DO l = 1, 3
-       pol_ind(l, l) = pol_ind(l, l) + zero_k_term(l) 
-    ENDDO
+    sum_alpha = SUM(alpha, DIM=1)
+    pol_ind = pol_ind + f * MATMUL(sum_alpha, sum_alpha) / 3.0d0
     !--------------------------------------------------------------------------------------------
     !--------------------------------------------------------------------------------------------
 
@@ -431,12 +436,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     DOUBLE PRECISION :: pol(3, 3)
 
-    INTEGER :: k
-
     pol = 0.0d0
-    DO k = 1, 3
-    !   pol(k, k) = pol(k, k) + alpha(k)
-    ENDDO
+    !pol = SUM(alpha, DIM=1)
     pol = pol + pol_ind 
 
   END FUNCTION calc_polarizability
@@ -471,15 +472,19 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION outer
 
-  FUNCTION outer_self(a)
+  FUNCTION outer_cmplx(a, b)
 
-    DOUBLE PRECISION, INTENT(IN) :: a(3)
+    DOUBLE COMPLEX, INTENT(IN) :: a(3), b(3)
 
-    DOUBLE PRECISION :: outer_self(3,3)
+    DOUBLE COMPLEX :: outer_cmplx(3,3)
 
-    outer_self  = outer(a, a)
+    INTEGER :: i
 
-  END FUNCTION outer_self
+    DO i=1, 3
+       outer_cmplx(i, :)  = a(i) * b(:)
+    ENDDO
+
+  END FUNCTION outer_cmplx
 
 END SUBROUTINE h2o_dipole
 

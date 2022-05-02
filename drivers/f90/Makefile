@@ -22,20 +22,20 @@
 .PHONY: all modules clean
 
 #FLAGS=-g -O3 -Wall
-#FLAGS=-O3 -Wall
-FLAGS=-O3
+FLAGS=-O3 -Wall
+#FLAGS=-O3 -warn all
 CFLAGS=$(FLAGS)
-#FFLAGS=$(FLAGS) -ffree-line-length-none -ffixed-line-length-none -Wno-maybe-uninitialized
-FFLAGS=$(FLAGS) 
+FFLAGS=$(FLAGS) -ffree-line-length-none -ffixed-line-length-none -Wno-maybe-uninitialized
+#FFLAGS=$(FLAGS) 
 #FFLAGS=-g -O0 -fcheck=all -Wall -pedantic -ffree-line-length-none
 
 MODULES=distance.f90 LJ.f90 SG.f90 pes/pswater.f90 pes/LEPS.f90 LJPolymer.f90 pes/efield.f90 pes/eckart.f90 pes/doublewell.f90 pes/doublewell_1D.f90 pes/MB.f90
 PES=pes/zundel.f pes/morse.f pes/qtip4pf.f pes/utility.f pes/ch52008.f pes/h2o_dip_pol.f
 OBJECTS=$(MODULES:%.f90=%.o) $(PES:%.f=%.o)
-#FC=gfortran
-#CC=gcc
-FC=ifort
-CC=icc
+FC=gfortran
+CC=gcc
+#FC=ifort
+#CC=icc
 all: driver.x #driver_pure.x
 
 sockets.o: sockets.c
