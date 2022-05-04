@@ -90,6 +90,11 @@
       INTEGER :: nbeads=1, dipole_freq=1, der_freq=1, nsteps_eq=1000000, nsteps_neq=1000000
       INTEGER :: counter, step
       LOGICAL :: compute_dip, compute_der, neq = .FALSE.
+
+      DOUBLE PRECISION, ALLOCATABLE :: dip_der_num(:, :)
+      DOUBLE PRECISION :: dip_tmp(3)
+      DOUBLE PRECISION, ALLOCATABLE :: atoms_tmp(:, :)
+ 
       !------------------------------------------------------------------
       !------------------------------------------------------------------
       
@@ -677,6 +682,24 @@
                ELSE
                   dip = 0; dip_der = 0; polar = 0
                ENDIF
+               !Numerical derivative (computed at first step only): Gives same result as the analytical derivative.
+               !Will be deleted in the next commit.
+               !IF ((step .EQ. 0) .AND. (.NOT. neq)) THEN
+               !   IF (.NOT. ALLOCATED(dip_der_num)) ALLOCATE(dip_der_num(nat, 3))
+               !   DO i = 1, nat
+               !      DO j = 1, 3
+               !         atoms_tmp = atoms
+               !         atoms_tmp(i, j) = atoms(i, j) + 0.00005d0
+               !         CALL h2o_dipole(vpars(1:3), nat, atoms_tmp, .FALSE., dip, dip_der, polar)
+               !         dip_tmp = dip
+               !         atoms_tmp(i, j) = atoms(i, j) - 0.00005d0
+               !         CALL h2o_dipole(vpars(1:3), nat, atoms_tmp, .FALSE., dip, dip_der, polar)
+               !         dip_der_num(i, j) = (dip_tmp(3) - dip(3)) / 0.0001d0
+               !      ENDDO
+               !   ENDDO
+               !   dip_der = dip_der_num
+               !ENDIF
+
                counter = counter + 1
 
             ELSE
@@ -807,7 +830,7 @@
                WRITE(string, '(a,3x,f15.8,a,f15.8,a,f15.8, 3x,a)') '{"dipole": [',dip(1),",",dip(2),",",dip(3),"],"
                WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
                !WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"]}"
-               WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"],"
+               WRITE(out_string, string2) '"dipole_derivative": [',TRANSPOSE(dip_der),"],"
                out_string = TRIM(string)//TRIM(out_string)
                WRITE(string, '(a,3x, 8(f15.8, ","),f15.8,3x,a)') '"polarizability": [',polar,"]}"
                out_string = TRIM(out_string)//TRIM(string)
