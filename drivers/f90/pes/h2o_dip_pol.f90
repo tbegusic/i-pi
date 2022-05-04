@@ -109,8 +109,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     alpha = 0.0d0
     DO i = 1, nmol
        iatom = 3 * (i - 1) + 1
-
-       !x-axis.
+       !x-axis: (rH1 - rH2) normalized.
        dist_vec = atoms(iatom + 1, :) - atoms(iatom + 2, :)
        norm_tmp = NORM2(dist_vec)
        O(:, 1) = dist_vec / norm_tmp
@@ -120,7 +119,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
           dO_dr(2, :, :, 1) = tnsr_tmp
           dO_dr(3, :, :, 1) = -tnsr_tmp
        ENDIF
-       !y-axis.
+       !y-axis: rO - rH1 is orthonormalized w.r.t. rx.
        dist_vec = atoms(iatom, :) - atoms(iatom + 1, :)
        O(:, 2) = dist_vec - DOT_PRODUCT(dist_vec, O(:, 1)) * O(:, 1)
        norm_tmp = NORM2(O(:, 2))
@@ -131,7 +130,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
           dO_dr(3, :, :, 2) = - MATMUL(outer(MATMUL(dO_dr(3, :, :, 1), dist_vec), O(:, 1)) + DOT_PRODUCT(O(:, 1), dist_vec) * dO_dr(3, :, :, 1), tnsr_tmp)
           dO_dr(2, :, :, 2) = -dO_dr(3, :, :, 2) - dO_dr(1, :, :, 2)
        ENDIF
-       !z-axis.
+       !z-axis: Cross product between rx and ry (perpendicular to the molecular plane).
        O(:, 3) = cross_product(O(:, 1), O(:, 2))
        IF (compute_der) THEN
           DO j = 1, 3
@@ -159,6 +158,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE calc_alpha
 
+  ! Computes matrix (Id - outer(vec, vec)) / norm, which appears in the
+  ! computation of the gradient of the rotation matrix.
   FUNCTION rot_grad_tnsr(vec, norm) RESULT(tnsr)
 
     DOUBLE PRECISION, INTENT(IN) :: vec(3), norm
@@ -491,7 +492,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
        ENDDO
        !Induced dipoles from electrostatic interaction with charges on other water molecules.
     ENDDO
-    calc_dipole(:) = calc_dipole(:) + dip_ind(:)
+    calc_dipole = calc_dipole + dip_ind
 
   END FUNCTION calc_dipole
 
