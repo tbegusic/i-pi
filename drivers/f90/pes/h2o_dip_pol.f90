@@ -50,8 +50,12 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: qh = - qm / 2
   DOUBLE PRECISION, PARAMETER :: charges(3) = (/ qm, qh, qh /) !(n_charged_atom_per_mol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
-  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3
+  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3 !Isotropic polarizability from Hamm's paper.
+  !Anisotropic polarizability from Hamm's paper.
   DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * 1.88973d0**3
+  !Anisotropic polarizability from J. Comput. Chem. 2016, 37, 2125–2132.
+  !Was not better than the one from Hamm.
+  !DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.37071d0, 1.41205d0, 1.46317d0 /) * 1.88973d0**3
 
   INTEGER :: nmol
 

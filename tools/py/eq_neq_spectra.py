@@ -43,7 +43,11 @@ class EqNeqSpectra(object):
         """ 
         tree = et.parse(file_in)
         root = tree.getroot()
-        tsteps = int(root.find('./total_steps').text)
+        #total_steps is the original, now deprecated, version. Will be deleted in the future, left for now for back-compatibility.
+        try:
+            tsteps = int(root.find('./total_steps').text)
+        except:
+            tsteps = int(root.find('./corr_steps').text)
         epsilon = float(root.find('./epsilon').text)
         return EqNeqSpectra(epsilon, tsteps)
 
@@ -119,7 +123,7 @@ class EqNeqSpectra(object):
         """Runs nonequilibrium trajectories."""
         self.fetch_data_and_modify_simulation(sim)
         self.der = np.transpose(np.array([np.loadtxt(self.der_fn + '_' + str(b)) for b in range(self.nbeads)]), [1,0,2])
-        for step in range(ceil(self.tsteps/self.chk_stride), floor(self.tsteps_eq/self.chk_stride)):
+        for step in range(ceil(self.tsteps/self.chk_stride), ceil(self.tsteps_eq/self.chk_stride)):
             for kick in [-1, 1]:
                 self.prepare_for_run(sim, step, kick)
                 sim.run()
