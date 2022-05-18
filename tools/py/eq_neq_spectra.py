@@ -113,21 +113,30 @@ class EqNeqSpectra(object):
         if (type(sim.syslist[0].motion.integrator) is NVEConstrainedIntegrator):
             sim.syslist[0].motion.integrator.proj_cotangent()
         sim.step = 0
-        print(file_in, kick)
-
-    def process(self):
-        dipole = np.loadtxt(self.dip_fn + '_0')[0:self.tsteps_eq//self.dip_stride + 1]
-        np.savetxt("dipole", dipole)
 
     def run(self, sim):
         """Runs nonequilibrium trajectories."""
+
         self.fetch_data_and_modify_simulation(sim)
-        self.der = np.transpose(np.array([np.loadtxt(self.der_fn + '_' + str(b)) for b in range(self.nbeads)]), [1,0,2])
+        #Bead number formatting with pre-padded zeros (from ipi/engine/outputs.py).
+        fmt_bead = (
+            "{0:0"
+            + str(int(1 + np.floor(np.log(self.nbeads) / np.log(10))))
+            + "d}"
+        )
+        self.der = np.transpose(np.array([np.loadtxt(self.der_fn + '_' + fmt_bead.format(b)) for b in range(self.nbeads)]), [1,0,2])
         for step in range(ceil(self.tsteps/self.chk_stride), ceil(self.tsteps_eq/self.chk_stride)):
             for kick in [-1, 1]:
                 self.prepare_for_run(sim, step, kick)
                 sim.run()
-        self.process()
+                #############################################################################################
+                #Stop the thread that monitors for softexit. This is needed because a new thread is started
+                #every time we invoke simulation run, leading to a constant increase in the number of
+                #threads. The code breaks when a maximum number of threads is reached.
+                softexit._doloop[0] = False
+                while softexit._thread.is_alive():
+                    softexit._thread.join(0.5)
+                #############################################################################################
 
 def main(fn_input, fn_spec_input, options):
     """Main procedure:
