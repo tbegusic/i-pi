@@ -125,7 +125,8 @@ class EqNeqSpectra(object):
             + "d}"
         )
         self.der = np.transpose(np.array([np.loadtxt(self.der_fn + '_' + fmt_bead.format(b)) for b in range(self.nbeads)]), [1,0,2])
-        for step in range(ceil(self.tsteps/self.chk_stride), ceil(self.tsteps_eq/self.chk_stride)):
+        for step in range(ceil(self.tsteps/self.chk_stride), floor(self.tsteps_eq/self.chk_stride) + 1):
+            print(step,self.tsteps,self.chk_stride,self.tsteps_eq)
             for kick in [-1, 1]:
                 self.prepare_for_run(sim, step, kick)
                 sim.run()

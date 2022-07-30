@@ -112,7 +112,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     alpha = 0.0d0
     DO i = 1, nmol
+
        iatom = 3 * (i - 1) + 1
+       DO k = 1, 3
+          !alpha(i, k, k) = a_iso              !Isotropic molecular polarizability.
+          alpha(i, k, k) = a_aniso(k)          !Anisotropic molecular polarizability.
+       ENDDO
+       !alpha(i, :, :) = calc_aniso_alpha(i, atoms(iatom:iatom+2, :)) !Anisotropic molecular polarizability.
+
        !x-axis: (rH1 - rH2) normalized.
        dist_vec = atoms(iatom + 1, :) - atoms(iatom + 2, :)
        norm_tmp = NORM2(dist_vec)
@@ -143,12 +150,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
              ENDDO
           ENDDO
        ENDIF
-       DO k = 1, 3
-          !alpha(i, k, k) = a_iso           !Isotropic molecular polarizability.
-          alpha(i, k, k) = a_aniso(k)       !Anisotropic molecular polarizability.
-       ENDDO
 
-      !Rotated polarizability and its gradient.
+       !Rotated polarizability and its gradient.
        IF (compute_der) THEN
           DO j = 1, 3
              DO k = 1, 3

@@ -498,6 +498,10 @@
                forces(1,1) = -ks*atoms(1,1)
                virial = 0.0d0
                virial(1,1) = forces(1,1)*atoms(1,1)
+               IF (.NOT. ALLOCATED(dip_der)) ALLOCATE (dip_der(nat, 3))
+               dip = 0.0d0; dip(1) = atoms(1,1)
+               dip_der(:,:) = 0.0d0; dip_der(1,1) = 1.0d0
+               polar(:,:) = 0.0d0; polar(1,1) = atoms(1,1)**2 
             ELSEIF (vstyle == 30) THEN ! 3D harmonic potential
                    pot = 0.0d0
                    forces = 0.0d0
@@ -804,7 +808,7 @@
                CALL writebuffer(socket,initbuffer,cbuf)
                IF (verbose > 1) WRITE(*,*) "    !write!=> extra: ", &
      &         initbuffer
-            ELSEIF (vstyle==26) THEN ! returns the dipole and its derivative through initbuffer
+            ELSEIF (vstyle==26 .OR. vstyle==3) THEN ! returns the dipole and its derivative through initbuffer
                WRITE(string, '(a,3x,f15.8,a,f15.8,a,f15.8, 3x,a)') '{"dipole": [',dip(1),",",dip(2),",",dip(3),"],"
                WRITE(string2, *) "(a,3x,", 3*nat - 1, '(f15.8, ","),f15.8,3x,a)'
                !WRITE(out_string, string2) '"dipole_derivative": [',dip_der,"]}"
