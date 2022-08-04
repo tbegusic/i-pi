@@ -53,8 +53,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3 !Isotropic polarizability from Hamm's paper.
   !Anisotropic polarizability from Hamm's paper.
   DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * 1.88973d0**3
-  !Anisotropic polarizability from J. Comput. Chem. 2016, 37, 2125–2132.
-  !Was not better than the one from Hamm.
+  !Anisotropic polarizability from J. Comput. Chem. 2016, 37, 2125–2132. Was not better than the one from Hamm.
   !DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.37071d0, 1.41205d0, 1.46317d0 /) * 1.88973d0**3
 
   INTEGER :: nmol
@@ -107,63 +106,150 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   SUBROUTINE calc_alpha
 
-    INTEGER :: i, iatom, j, k
-    DOUBLE PRECISION :: O(3, 3), dO_dr(3, 3, 3, 3), norm_tmp, tnsr_tmp(3, 3), dist_vec(3)
+    INTEGER :: i, iatom
 
-    alpha = 0.0d0
     DO i = 1, nmol
-
        iatom = 3 * (i - 1) + 1
-       DO k = 1, 3
-          !alpha(i, k, k) = a_iso              !Isotropic molecular polarizability.
-          alpha(i, k, k) = a_aniso(k)          !Anisotropic molecular polarizability.
-       ENDDO
-       !alpha(i, :, :) = calc_aniso_alpha(i, atoms(iatom:iatom+2, :)) !Anisotropic molecular polarizability.
-
-       !x-axis: (rH1 - rH2) normalized.
-       dist_vec = atoms(iatom + 1, :) - atoms(iatom + 2, :)
-       norm_tmp = NORM2(dist_vec)
-       O(:, 1) = dist_vec / norm_tmp
-       IF (compute_der) THEN
-          tnsr_tmp = rot_grad_tnsr(O(:, 1), norm_tmp)
-          dO_dr(1, :, :, 1) = 0.0d0
-          dO_dr(2, :, :, 1) = tnsr_tmp
-          dO_dr(3, :, :, 1) = -tnsr_tmp
-       ENDIF
-       !y-axis: rO - rH1 is orthonormalized w.r.t. rx.
-       dist_vec = atoms(iatom, :) - atoms(iatom + 1, :)
-       O(:, 2) = dist_vec - DOT_PRODUCT(dist_vec, O(:, 1)) * O(:, 1)
-       norm_tmp = NORM2(O(:, 2))
-       O(:, 2) = O(:, 2) / norm_tmp
-       IF (compute_der) THEN
-          tnsr_tmp = rot_grad_tnsr(O(:, 2), norm_tmp)
-          dO_dr(1, :, :, 2) = MATMUL(rot_grad_tnsr(O(:, 1), 1.0d0), tnsr_tmp)
-          dO_dr(3, :, :, 2) = - MATMUL(outer(MATMUL(dO_dr(3, :, :, 1), dist_vec), O(:, 1)) + DOT_PRODUCT(O(:, 1), dist_vec) * dO_dr(3, :, :, 1), tnsr_tmp)
-          dO_dr(2, :, :, 2) = -dO_dr(3, :, :, 2) - dO_dr(1, :, :, 2)
-       ENDIF
-       !z-axis: Cross product between rx and ry (perpendicular to the molecular plane).
-       O(:, 3) = cross_product(O(:, 1), O(:, 2))
-       IF (compute_der) THEN
-          DO j = 1, 3
-             DO k = 1, 3
-                dO_dr(j, k, :, 3) = cross_product(dO_dr(j, k, :, 1), O(:, 2)) + cross_product(O(:, 1), dO_dr(j, k, :, 2)) 
-             ENDDO
-          ENDDO
-       ENDIF
-
-       !Rotated polarizability and its gradient.
-       IF (compute_der) THEN
-          DO j = 1, 3
-             DO k = 1, 3
-                tnsr_tmp = MATMUL(MATMUL(dO_dr(j, k, :, :), alpha(i, :, :)), TRANSPOSE(O))
-                dalpha_dr(iatom + j - 1, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp)
-             ENDDO
-          ENDDO
-       ENDIF
-       alpha(i, :, :) = MATMUL(MATMUL(O, alpha(i, :, :)), TRANSPOSE(O))
+       CALL calc_alpha_mol(alpha(i, :, :))
+       CALL rotate_alpha(alpha(i, :, :), dalpha_dr(iatom : iatom + 2, :, :, :), atoms(iatom : iatom + 2, :))
     ENDDO
 
   END SUBROUTINE calc_alpha
+
+  SUBROUTINE calc_alpha_mol(alpha_mol)
+
+    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3)
+    INTEGER :: k
+
+    alpha_mol = 0.0d0
+    DO k = 1, 3
+       !alpha(i, k, k) = a_iso              !Isotropic molecular polarizability.
+       alpha_mol(k, k) = a_aniso(k)          !Anisotropic molecular polarizability.
+    ENDDO
+    !alpha(i, :, :) = calc_aniso_alpha(i, atoms(iatom:iatom+2, :)) !Anisotropic molecular polarizability.
+
+  END SUBROUTINE calc_alpha_mol
+
+! Old definition of xyz axes for polarizability. Here, x was determined by the vector connecting two hydrogen atoms
+! and the molecule was in the xy plane.
+! Will be deleted in the next commit.
+!  SUBROUTINE rotate_alpha(alpha_mol, dalpha_dr_mol, atoms_mol)
+!
+!    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
+!    DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
+!
+!    DOUBLE PRECISION :: O(3, 3), dO_dr(3, 3, 3, 3), norm_tmp, tnsr_tmp(3, 3), dist_vec(3)
+!    INTEGER :: j, k
+!
+!    !x-axis: (rH1 - rH2) normalized.
+!    CALL normalized_vec_norm(atoms_mol(2, :) - atoms_mol(3, :), O(:, 1), norm_tmp)
+!    IF (compute_der) THEN
+!       tnsr_tmp = rot_grad_tnsr(O(:, 1), norm_tmp)
+!       dO_dr(1, :, :, 1) = 0.0d0
+!       dO_dr(2, :, :, 1) = tnsr_tmp
+!       dO_dr(3, :, :, 1) = -tnsr_tmp
+!    ENDIF
+!    !y-axis: rO - rH1 is orthonormalized w.r.t. rx.
+!    dist_vec = atoms_mol(1, :) - atoms_mol(2, :)
+!    CALL normalized_vec_norm(dist_vec - DOT_PRODUCT(dist_vec, O(:, 1)) * O(:, 1), O(:, 2), norm_tmp)
+!    IF (compute_der) THEN
+!       tnsr_tmp = rot_grad_tnsr(O(:, 2), norm_tmp)
+!       dO_dr(1, :, :, 2) = MATMUL(rot_grad_tnsr(O(:, 1), 1.0d0), tnsr_tmp)
+!       dO_dr(3, :, :, 2) = - MATMUL(outer(MATMUL(dO_dr(3, :, :, 1), dist_vec), O(:, 1)) + DOT_PRODUCT(O(:, 1), dist_vec) * dO_dr(3, :, :, 1), tnsr_tmp)
+!       dO_dr(2, :, :, 2) = -dO_dr(3, :, :, 2) - dO_dr(1, :, :, 2)
+!    ENDIF
+!    !z-axis: Cross product between rx and ry (perpendicular to the molecular plane).
+!    O(:, 3) = cross_product(O(:, 1), O(:, 2))
+!    IF (compute_der) THEN
+!       DO j = 1, 3
+!          DO k = 1, 3
+!             dO_dr(j, k, :, 3) = cross_product(dO_dr(j, k, :, 1), O(:, 2)) + cross_product(O(:, 1), dO_dr(j, k, :, 2)) 
+!          ENDDO
+!       ENDDO
+!    ENDIF
+!
+!    !Rotated polarizability and its gradient.
+!    IF (compute_der) THEN
+!       DO j = 1, 3
+!          DO k = 1, 3
+!             tnsr_tmp = MATMUL(MATMUL(dO_dr(j, k, :, :), alpha_mol(:, :)), TRANSPOSE(O))
+!             dalpha_dr_mol(j, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp)
+!          ENDDO
+!       ENDDO
+!    ENDIF
+!    alpha_mol(:, :) = MATMUL(MATMUL(O, alpha_mol(:, :)), TRANSPOSE(O))
+!
+!  END SUBROUTINE rotate_alpha
+
+  ! Definition of axes from G. Avila, JCP 122, 144310 (2005).
+  ! y is the axis that bisects the H-O-H angle and molecules lies in the xy plane.
+  ! Following this definition, x and y are computed from r1 = normalized(rO - rH1) and r2 = normalized(rO-rH2) as
+  ! x = normalized(r1 -r2), y = normalized(r1+r2).
+  ! z is perpendicular to the plane of the molecule and can be computed as the cross product of x and y.
+  SUBROUTINE rotate_alpha(alpha_mol, dalpha_dr_mol, atoms_mol)
+
+    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
+    DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
+
+    DOUBLE PRECISION :: O(3, 3), dO_dr(3, 3, 3, 3)
+    DOUBLE PRECISION :: r1(3), r2(3), r_sum(3), r_diff(3), r1_norm, r2_norm, r_sum_norm, r_diff_norm
+    DOUBLE PRECISION :: tnsr1(3, 3), tnsr2(3, 3), tnsr_sum(3, 3), tnsr_diff(3, 3), tnsr_tmp(3, 3)
+    INTEGER :: j, k
+
+    CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(2,:), r1, r1_norm)
+    CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(3,:), r2, r2_norm)
+    CALL normalized_vec_norm(r1 + r2, r_sum, r_sum_norm)
+    CALL normalized_vec_norm(r1 - r2, r_diff, r_diff_norm)
+
+    !x, y, and z molecular axes in the laboratory frame.
+    O(:, 1) = r_diff
+    O(:, 2) = r_sum
+    O(:, 3) = cross_product(O(:, 1), O(:, 2))
+
+    IF (compute_der) THEN
+       tnsr1 = rot_grad_tnsr(r1, r1_norm)
+       tnsr2 = rot_grad_tnsr(r2, r2_norm)
+       tnsr_sum = rot_grad_tnsr(r_sum, r_sum_norm)
+       tnsr_diff = rot_grad_tnsr(r_diff, r_diff_norm)
+       !Derivatives of the x axis w.r.t. O, H1, and H2 atomic coordinates.
+       dO_dr(1, :, :, 1) =  MATMUL(tnsr1-tnsr2, tnsr_diff)     
+       dO_dr(2, :, :, 1) = -MATMUL(tnsr1, tnsr_diff)       
+       dO_dr(3, :, :, 1) =  MATMUL(tnsr2, tnsr_diff)       
+       !Derivatives of the y axis w.r.t. O, H1, and H2 atomic coordinates.
+       dO_dr(1, :, :, 2) =  MATMUL(tnsr1 + tnsr2, tnsr_sum )
+       dO_dr(2, :, :, 2) = -MATMUL(tnsr1, tnsr_sum )        
+       dO_dr(3, :, :, 2) = -MATMUL(tnsr2, tnsr_sum )        
+       !Derivatives of the z axis w.r.t. atomic coordinates.
+       DO j = 1, 3
+          DO k = 1, 3
+             dO_dr(j, k, :, 3) = cross_product(dO_dr(j, k, :, 1), O(:, 2)) + cross_product(O(:, 1), dO_dr(j, k, :, 2)) 
+          ENDDO
+       ENDDO
+
+      !Rotated polarizability gradient. Uses molecular-frame alpha_mol, so must be evaluated before rotating polarizability.
+       DO j = 1, 3
+          DO k = 1, 3
+             tnsr_tmp = MATMUL(MATMUL(dO_dr(j, k, :, :), alpha_mol(:, :)), TRANSPOSE(O))
+             dalpha_dr_mol(j, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp)
+          ENDDO
+       ENDDO
+    ENDIF
+
+    !Rotated polarizability.
+    alpha_mol(:, :) = MATMUL(MATMUL(O, alpha_mol(:, :)), TRANSPOSE(O))
+
+  END SUBROUTINE rotate_alpha
+
+  ! Takes a general vector x and computes its norm (x_norm) and normalized vector x_vec = x / x_norm.
+  SUBROUTINE normalized_vec_norm(x, x_vec, x_norm)
+
+    DOUBLE PRECISION, INTENT(IN) :: x(:)
+    DOUBLE PRECISION, INTENT(OUT) :: x_vec(:), x_norm
+
+    x_norm = NORM2(x)
+    x_vec = x / x_norm
+
+  END SUBROUTINE normalized_vec_norm
 
   ! Computes matrix (Id - outer(vec, vec)) / norm, which appears in the
   ! computation of the gradient of the rotation matrix.

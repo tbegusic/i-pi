@@ -90,6 +90,11 @@
       INTEGER :: nbeads=1, dipole_freq=1, der_freq=1, nsteps_eq=1000000, nsteps_neq=1000000
       INTEGER :: counter, step
       LOGICAL :: compute_dip, compute_der, neq = .FALSE.
+      ! Used for numerican derivative of the dipole moment, only for testing.
+      !DOUBLE PRECISION, ALLOCATABLE :: dip_der_num(:, :)
+      !DOUBLE PRECISION :: dip_tmp(3)
+      !DOUBLE PRECISION, ALLOCATABLE :: atoms_tmp(:, :)
+
  
       !------------------------------------------------------------------
       !------------------------------------------------------------------
@@ -682,6 +687,24 @@
                ELSE
                   dip = 0; dip_der = 0; polar = 0
                ENDIF
+               !Numerical derivative (computed at first step only): Gives same result as the analytical derivative.
+               !Used for testing only.
+               !IF ((step .EQ. 0) .AND. (.NOT. neq)) THEN 
+               !IF (.NOT. ALLOCATED(dip_der_num)) ALLOCATE(dip_der_num(nat, 3))
+               !   DO i = 1, nat
+               !      DO j = 1, 3
+               !         atoms_tmp = atoms
+               !         atoms_tmp(i, j) = atoms(i, j) + 0.00005d0
+               !         CALL h2o_dipole(vpars(1:3), nat, atoms_tmp, .FALSE., dip, dip_der, polar)
+               !         dip_tmp = dip
+               !         atoms_tmp(i, j) = atoms(i, j) - 0.00005d0
+               !         CALL h2o_dipole(vpars(1:3), nat, atoms_tmp, .FALSE., dip, dip_der, polar)
+               !         dip_der_num(i, j) = (dip_tmp(3) - dip(3)) / 0.0001d0
+               !      ENDDO
+               !   ENDDO
+               !   dip_der = dip_der_num
+               !ENDIF
+
                counter = counter + 1
 
             ELSE
