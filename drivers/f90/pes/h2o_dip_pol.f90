@@ -45,16 +45,87 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   DOUBLE PRECISION, PARAMETER :: pi = DACOS(-1.0d0), twopi = 2 * pi, sqrtpi = SQRT(pi)
   DOUBLE COMPLEX, PARAMETER :: IU = CMPLX(0.0d0, 1.0d0, KIND=16)
-  
+  DOUBLE PRECISION, PARAMETER :: angtoau = 1.88973d0
+ 
   DOUBLE PRECISION, PARAMETER :: qm = -1.1128d0
   DOUBLE PRECISION, PARAMETER :: qh = - qm / 2
   DOUBLE PRECISION, PARAMETER :: charges(3) = (/ qm, qh, qh /) !(n_charged_atom_per_mol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
-  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * 1.88973d0**3 !Isotropic polarizability from Hamm's paper.
+  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * angtoau**3 !Isotropic polarizability from Hamm's paper.
   !Anisotropic polarizability from Hamm's paper.
-  DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * 1.88973d0**3
+  DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * angtoau**3
   !Anisotropic polarizability from J. Comput. Chem. 2016, 37, 2125–2132. Was not better than the one from Hamm.
-  !DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.37071d0, 1.41205d0, 1.46317d0 /) * 1.88973d0**3
+  !DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.37071d0, 1.41205d0, 1.46317d0 /) * angtoau**3
+  !Coefficients for the flexible polarizability from G. Avila, JCP 122, 144310 (2005).
+  !All units in angstrom, last constant is 1/ (4 pi eps_0) * 10^-10.
+  !Axes defined as in the original paper, with a rotation x->z, y->x, z->y.
+  DOUBLE PRECISION, PARAMETER :: r_eq = 0.95843d0 * angtoau, phi_eq = 104.44d0 / 180.0d0 * pi
+  DOUBLE PRECISION, PARAMETER, DIMENSION(3, 0:3, 0:3, 0:3) :: a_ijk = RESHAPE( (/ &
+    1.64720d0, 1.58787d0, 1.53818d0, & !000
+    2.39394d0, 1.60710d0, 0.82863d0, & !100
+    1.99483d0, 0.61842d0, 0.08172d0, & !200
+    0.53619d0,-0.20959d0,-0.11892d0, & !300
+    0.24730d0,-0.07614d0, 0.08361d0, & !010
+    0.99680d0,-0.70521d0, 0.08557d0, & !110
+    1.62467d0,-0.35495d0, 0.06999d0, & !210
+    0.00000d0, 0.00000d0, 0.00000d0, & !310
+    0.03954d0, 0.13331d0, 0.05666d0, & !020
+   -0.08290d0, 0.00892d0, 0.08190d0, & !120
+    0.00000d0, 0.00000d0, 0.00000d0, & !220
+    0.00000d0, 0.00000d0, 0.00000d0, & !320
+   -0.08900d0, 0.05328d0,-0.00271d0, & !030
+    0.00000d0, 0.00000d0, 0.00000d0, & !130
+    0.00000d0, 0.00000d0, 0.00000d0, & !230
+    0.00000d0, 0.00000d0, 0.00000d0, & !330
+    0.00000d0, 0.00000d0, 0.00000d0, & !001
+    0.00000d0, 0.00000d0, 0.00000d0, & !101
+    0.00000d0, 0.00000d0, 0.00000d0, & !201
+    0.00000d0, 0.00000d0, 0.00000d0, & !301
+    0.00000d0, 0.00000d0, 0.00000d0, & !011
+    0.00000d0, 0.00000d0, 0.00000d0, & !111
+    0.00000d0, 0.00000d0, 0.00000d0, & !211
+    0.00000d0, 0.00000d0, 0.00000d0, & !311
+    0.00000d0, 0.00000d0, 0.00000d0, & !021
+    0.00000d0, 0.00000d0, 0.00000d0, & !121
+    0.00000d0, 0.00000d0, 0.00000d0, & !221
+    0.00000d0, 0.00000d0, 0.00000d0, & !321
+    0.00000d0, 0.00000d0, 0.00000d0, & !031
+    0.00000d0, 0.00000d0, 0.00000d0, & !131
+    0.00000d0, 0.00000d0, 0.00000d0, & !231
+    0.00000d0, 0.00000d0, 0.00000d0, & !331
+    0.89549d0, 0.71119d0,-0.04232d0, & !002
+    0.41179d0, 0.35624d0,-0.10806d0, & !102
+   -2.27559d0,-1.25979d0,-0.48361d0, & !202
+    0.00000d0, 0.00000d0, 0.00000d0, & !302
+    0.41179d0,-1.08201d0,-0.06926d0, & !012
+    3.29320d0, 0.01374d0,-0.09119d0, & !112
+    0.00000d0, 0.00000d0, 0.00000d0, & !212
+    0.00000d0, 0.00000d0, 0.00000d0, & !312
+   -0.20222d0, 0.34644d0, 0.12995d0, & !022
+    0.00000d0, 0.00000d0, 0.00000d0, & !122
+    0.00000d0, 0.00000d0, 0.00000d0, & !222
+    0.00000d0, 0.00000d0, 0.00000d0, & !322
+    0.00000d0, 0.00000d0, 0.00000d0, & !032
+    0.00000d0, 0.00000d0, 0.00000d0, & !132
+    0.00000d0, 0.00000d0, 0.00000d0, & !232
+    0.00000d0, 0.00000d0, 0.00000d0, & !332
+    0.00000d0, 0.00000d0, 0.00000d0, & !003
+    0.00000d0, 0.00000d0, 0.00000d0, & !103
+    0.00000d0, 0.00000d0, 0.00000d0, & !203
+    0.00000d0, 0.00000d0, 0.00000d0, & !303
+    0.00000d0, 0.00000d0, 0.00000d0, & !013
+    0.00000d0, 0.00000d0, 0.00000d0, & !113
+    0.00000d0, 0.00000d0, 0.00000d0, & !213
+    0.00000d0, 0.00000d0, 0.00000d0, & !313
+    0.00000d0, 0.00000d0, 0.00000d0, & !023
+    0.00000d0, 0.00000d0, 0.00000d0, & !123
+    0.00000d0, 0.00000d0, 0.00000d0, & !223
+    0.00000d0, 0.00000d0, 0.00000d0, & !323
+    0.00000d0, 0.00000d0, 0.00000d0, & !033
+    0.00000d0, 0.00000d0, 0.00000d0, & !133
+    0.00000d0, 0.00000d0, 0.00000d0, & !233
+    0.00000d0, 0.00000d0, 0.00000d0  & !333
+    /), (/3, 4, 4, 4/) ) * 0.89875517923d0 
 
   INTEGER :: nmol
 
@@ -110,76 +181,67 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     DO i = 1, nmol
        iatom = 3 * (i - 1) + 1
-       CALL calc_alpha_mol(alpha(i, :, :))
+       CALL calc_alpha_mol(alpha(i, :, :), dalpha_dr(iatom : iatom + 2, :, :, :), atoms(iatom : iatom + 2, :))
        CALL rotate_alpha(alpha(i, :, :), dalpha_dr(iatom : iatom + 2, :, :, :), atoms(iatom : iatom + 2, :))
     ENDDO
 
   END SUBROUTINE calc_alpha
 
-  SUBROUTINE calc_alpha_mol(alpha_mol)
+  SUBROUTINE calc_alpha_mol(alpha_mol, dalpha_dr_mol, atoms_mol)
 
-    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
+    DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
+
+    DOUBLE PRECISION :: a_Avila(3)
     INTEGER :: k
 
     alpha_mol = 0.0d0
+    dalpha_dr_mol = 0.0d0
+    CALL calc_alpha_Avila(a_Avila, dalpha_dr_mol, atoms_mol) !Anisotropic molecular polarizability.
     DO k = 1, 3
-       !alpha(i, k, k) = a_iso              !Isotropic molecular polarizability.
-       alpha_mol(k, k) = a_aniso(k)          !Anisotropic molecular polarizability.
+       !alpha(i, k, k) = a_iso               !Isotropic rigid molecular polarizability.
+       !alpha_mol(k, k) = a_aniso(k)         !Anisotropic rigid molecular polarizability.
+       alpha_mol(k, k) = a_Avila(k)         !Anisotropic flexible molecular polarizability.
     ENDDO
-    !alpha(i, :, :) = calc_aniso_alpha(i, atoms(iatom:iatom+2, :)) !Anisotropic molecular polarizability.
 
   END SUBROUTINE calc_alpha_mol
 
-! Old definition of xyz axes for polarizability. Here, x was determined by the vector connecting two hydrogen atoms
-! and the molecule was in the xy plane.
-! Will be deleted in the next commit.
-!  SUBROUTINE rotate_alpha(alpha_mol, dalpha_dr_mol, atoms_mol)
-!
-!    DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
-!    DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
-!
-!    DOUBLE PRECISION :: O(3, 3), dO_dr(3, 3, 3, 3), norm_tmp, tnsr_tmp(3, 3), dist_vec(3)
-!    INTEGER :: j, k
-!
-!    !x-axis: (rH1 - rH2) normalized.
-!    CALL normalized_vec_norm(atoms_mol(2, :) - atoms_mol(3, :), O(:, 1), norm_tmp)
-!    IF (compute_der) THEN
-!       tnsr_tmp = rot_grad_tnsr(O(:, 1), norm_tmp)
-!       dO_dr(1, :, :, 1) = 0.0d0
-!       dO_dr(2, :, :, 1) = tnsr_tmp
-!       dO_dr(3, :, :, 1) = -tnsr_tmp
-!    ENDIF
-!    !y-axis: rO - rH1 is orthonormalized w.r.t. rx.
-!    dist_vec = atoms_mol(1, :) - atoms_mol(2, :)
-!    CALL normalized_vec_norm(dist_vec - DOT_PRODUCT(dist_vec, O(:, 1)) * O(:, 1), O(:, 2), norm_tmp)
-!    IF (compute_der) THEN
-!       tnsr_tmp = rot_grad_tnsr(O(:, 2), norm_tmp)
-!       dO_dr(1, :, :, 2) = MATMUL(rot_grad_tnsr(O(:, 1), 1.0d0), tnsr_tmp)
-!       dO_dr(3, :, :, 2) = - MATMUL(outer(MATMUL(dO_dr(3, :, :, 1), dist_vec), O(:, 1)) + DOT_PRODUCT(O(:, 1), dist_vec) * dO_dr(3, :, :, 1), tnsr_tmp)
-!       dO_dr(2, :, :, 2) = -dO_dr(3, :, :, 2) - dO_dr(1, :, :, 2)
-!    ENDIF
-!    !z-axis: Cross product between rx and ry (perpendicular to the molecular plane).
-!    O(:, 3) = cross_product(O(:, 1), O(:, 2))
-!    IF (compute_der) THEN
-!       DO j = 1, 3
-!          DO k = 1, 3
-!             dO_dr(j, k, :, 3) = cross_product(dO_dr(j, k, :, 1), O(:, 2)) + cross_product(O(:, 1), dO_dr(j, k, :, 2)) 
-!          ENDDO
-!       ENDDO
-!    ENDIF
-!
-!    !Rotated polarizability and its gradient.
-!    IF (compute_der) THEN
-!       DO j = 1, 3
-!          DO k = 1, 3
-!             tnsr_tmp = MATMUL(MATMUL(dO_dr(j, k, :, :), alpha_mol(:, :)), TRANSPOSE(O))
-!             dalpha_dr_mol(j, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp)
-!          ENDDO
-!       ENDDO
-!    ENDIF
-!    alpha_mol(:, :) = MATMUL(MATMUL(O, alpha_mol(:, :)), TRANSPOSE(O))
-!
-!  END SUBROUTINE rotate_alpha
+  SUBROUTINE calc_alpha_Avila(a_Avila, dalpha_dr_mol, atoms_mol)
+
+    DOUBLE PRECISION, INTENT(INOUT) :: a_Avila(3), dalpha_dr_mol(3, 3, 3, 3)
+    DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
+
+    DOUBLE PRECISION :: r1(3), r2(3), r1_norm, r2_norm
+    DOUBLE PRECISION :: delta_r1, delta_r2, phi
+    DOUBLE PRECISION :: s1, s2, s3
+    INTEGER :: i, j, k
+
+    CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(2,:), r1, r1_norm)
+    CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(3,:), r2, r2_norm)
+    delta_r1 = r1_norm - r_eq 
+    delta_r2 = r2_norm - r_eq 
+    phi = ACOS(DOT_PRODUCT(r1, r2))
+
+    !All derived coordinates in angstrom, to match the units of the parameters defined in the paper.
+    s1 = (delta_r1 + delta_r2) / SQRT(2.0d0) / angtoau
+    s2 = (phi - phi_eq)
+    s3 = (delta_r2 - delta_r1) / SQRT(2.0d0) / angtoau
+
+    a_Avila = 0.0d0
+    DO i = 0, 3
+       DO j = 0, 3
+          DO k = 0, 3
+             IF (i + j + k < 3) THEN
+                a_Avila = a_Avila + a_ijk(:, i, j, k) * s1**i * s2**j * s3**k
+             ENDIF 
+          ENDDO
+       ENDDO
+    ENDDO
+    a_Avila = a_Avila * angtoau**3 ! Convert back to atomic units.
+
+    !Gradient not implemented yet.
+
+  END SUBROUTINE calc_alpha_Avila
 
   ! Definition of axes from G. Avila, JCP 122, 144310 (2005).
   ! y is the axis that bisects the H-O-H angle and molecules lies in the xy plane.
@@ -229,14 +291,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
       !Rotated polarizability gradient. Uses molecular-frame alpha_mol, so must be evaluated before rotating polarizability.
        DO j = 1, 3
           DO k = 1, 3
-             tnsr_tmp = MATMUL(MATMUL(dO_dr(j, k, :, :), alpha_mol(:, :)), TRANSPOSE(O))
-             dalpha_dr_mol(j, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp)
+             tnsr_tmp = multiply_matrices(dO_dr(j, k, :, :), alpha_mol(:, :), TRANSPOSE(O))
+             dalpha_dr_mol(j, k, :, :) = tnsr_tmp + TRANSPOSE(tnsr_tmp) + multiply_matrices(O, dalpha_dr_mol(j, k, :, :), TRANSPOSE(O))
           ENDDO
        ENDDO
     ENDIF
 
     !Rotated polarizability.
-    alpha_mol(:, :) = MATMUL(MATMUL(O, alpha_mol(:, :)), TRANSPOSE(O))
+    alpha_mol(:, :) = multiply_matrices(O, alpha_mol(:, :), TRANSPOSE(O))
 
   END SUBROUTINE rotate_alpha
 
@@ -678,6 +740,16 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     c(3) = a(1) * b(2) - a(2) * b(1)
 
   END FUNCTION cross_product
+
+  FUNCTION multiply_matrices(A, B, C) RESULT(ABC)
+
+    DOUBLE PRECISION, INTENT(IN) :: A(3, 3), B(3, 3), C(3, 3)
+
+    DOUBLE PRECISION :: ABC(3, 3)
+
+    ABC = MATMUL(A, MATMUL(B, C))
+
+  END FUNCTION multiply_matrices
 
 END SUBROUTINE h2o_dipole
 
