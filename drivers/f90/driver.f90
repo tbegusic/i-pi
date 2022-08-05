@@ -90,7 +90,7 @@
       INTEGER :: nbeads=1, dipole_freq=1, der_freq=1, nsteps_eq=1000000, nsteps_neq=1000000
       INTEGER :: counter, step
       LOGICAL :: compute_dip, compute_der, neq = .FALSE.
-      ! Used for numerican derivative of the dipole moment, only for testing.
+      ! Used for numerical derivative of the dipole moment, only for testing.
       !DOUBLE PRECISION, ALLOCATABLE :: dip_der_num(:, :)
       !DOUBLE PRECISION :: dip_tmp(3)
       !DOUBLE PRECISION, ALLOCATABLE :: atoms_tmp(:, :)

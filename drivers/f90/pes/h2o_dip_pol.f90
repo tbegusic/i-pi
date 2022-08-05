@@ -43,7 +43,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, INTENT(INOUT) :: dip_der(nat, 3)
   DOUBLE PRECISION, INTENT(INOUT) :: pol(3, 3)
 
-  DOUBLE PRECISION, PARAMETER :: pi = DACOS(-1.0d0), twopi = 2 * pi, sqrtpi = SQRT(pi)
+  DOUBLE PRECISION, PARAMETER :: pi = DACOS(-1.0d0), twopi = 2 * pi, sqrtpi = SQRT(pi), sqrt2 = SQRT(2.0d0)
   DOUBLE COMPLEX, PARAMETER :: IU = CMPLX(0.0d0, 1.0d0, KIND=16)
   DOUBLE PRECISION, PARAMETER :: angtoau = 1.88973d0
  
@@ -52,10 +52,13 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: charges(3) = (/ qm, qh, qh /) !(n_charged_atom_per_mol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
   DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * angtoau**3 !Isotropic polarizability from Hamm's paper.
+
   !Anisotropic polarizability from Hamm's paper.
   DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * angtoau**3
+
   !Anisotropic polarizability from J. Comput. Chem. 2016, 37, 2125–2132. Was not better than the one from Hamm.
   !DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.37071d0, 1.41205d0, 1.46317d0 /) * angtoau**3
+
   !Coefficients for the flexible polarizability from G. Avila, JCP 122, 144310 (2005).
   !All units in angstrom, last constant is 1/ (4 pi eps_0) * 10^-10.
   !Axes defined as in the original paper, with a rotation x->z, y->x, z->y.
@@ -192,27 +195,29 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
     DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
 
-    DOUBLE PRECISION :: a_Avila(3)
+    DOUBLE PRECISION :: a_Avila(3), da_dr(3, 3, 3)
     INTEGER :: k
 
     alpha_mol = 0.0d0
     dalpha_dr_mol = 0.0d0
-    CALL calc_alpha_Avila(a_Avila, dalpha_dr_mol, atoms_mol) !Anisotropic molecular polarizability.
+    CALL calc_alpha_Avila(a_Avila, da_dr, atoms_mol) !Anisotropic molecular polarizability.
     DO k = 1, 3
-       !alpha(i, k, k) = a_iso               !Isotropic rigid molecular polarizability.
-       !alpha_mol(k, k) = a_aniso(k)         !Anisotropic rigid molecular polarizability.
-       alpha_mol(k, k) = a_Avila(k)         !Anisotropic flexible molecular polarizability.
+       !alpha(i, k, k) = a_iso                    !Isotropic rigid molecular polarizability.
+       !alpha_mol(k, k) = a_aniso(k)              !Anisotropic rigid molecular polarizability.
+       alpha_mol(k, k) = a_Avila(k)               !Anisotropic flexible molecular polarizability.
+       dalpha_dr_mol(:, :, k, k) = da_dr(:, :, k) !Gradient of the anisotropic flexible molecular polarizability.
     ENDDO
 
   END SUBROUTINE calc_alpha_mol
 
-  SUBROUTINE calc_alpha_Avila(a_Avila, dalpha_dr_mol, atoms_mol)
+  SUBROUTINE calc_alpha_Avila(alpha_diag_mol, dalpha_dr_diag_mol, atoms_mol)
 
-    DOUBLE PRECISION, INTENT(INOUT) :: a_Avila(3), dalpha_dr_mol(3, 3, 3, 3)
+    DOUBLE PRECISION, INTENT(INOUT) :: alpha_diag_mol(3), dalpha_dr_diag_mol(3, 3, 3)
     DOUBLE PRECISION, INTENT(IN) :: atoms_mol(3, 3)
 
-    DOUBLE PRECISION :: r1(3), r2(3), r1_norm, r2_norm
-    DOUBLE PRECISION :: delta_r1, delta_r2, phi
+    DOUBLE PRECISION :: r1(3), r2(3), r1_norm, r2_norm, tnsr1(3, 3), tnsr2(3, 3)
+    DOUBLE PRECISION :: delta_r1, delta_r2, cos_phi, phi
+    DOUBLE PRECISION :: dalpha_ds(3, 3), dacos_dx
     DOUBLE PRECISION :: s1, s2, s3
     INTEGER :: i, j, k
 
@@ -220,26 +225,65 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(3,:), r2, r2_norm)
     delta_r1 = r1_norm - r_eq 
     delta_r2 = r2_norm - r_eq 
-    phi = ACOS(DOT_PRODUCT(r1, r2))
+    cos_phi = DOT_PRODUCT(r1, r2)
+    phi = ACOS(cos_phi)
 
     !All derived coordinates in angstrom, to match the units of the parameters defined in the paper.
-    s1 = (delta_r1 + delta_r2) / SQRT(2.0d0) / angtoau
-    s2 = (phi - phi_eq)
-    s3 = (delta_r2 - delta_r1) / SQRT(2.0d0) / angtoau
+    s1 = (delta_r1 + delta_r2) / sqrt2 / angtoau
+    s2 = phi - phi_eq
+    s3 = (delta_r2 - delta_r1) / sqrt2 / angtoau
 
-    a_Avila = 0.0d0
+    ! Inefficient evaluation of the polynomial, but clean code. Could be improved further for efficiency.
+    alpha_diag_mol = 0.0d0
     DO i = 0, 3
        DO j = 0, 3
           DO k = 0, 3
              IF (i + j + k < 3) THEN
-                a_Avila = a_Avila + a_ijk(:, i, j, k) * s1**i * s2**j * s3**k
+                alpha_diag_mol = alpha_diag_mol + a_ijk(:, i, j, k) * s1**i * s2**j * s3**k
              ENDIF 
           ENDDO
        ENDDO
     ENDDO
-    a_Avila = a_Avila * angtoau**3 ! Convert back to atomic units.
+    alpha_diag_mol = alpha_diag_mol * angtoau**3 ! Convert back to atomic units.
 
-    !Gradient not implemented yet.
+    IF (compute_der) THEN
+       !Helper variables.
+       tnsr1 = rot_grad_tnsr(r1, r1_norm)
+       tnsr2 = rot_grad_tnsr(r2, r2_norm)
+       dacos_dx = - angtoau / SQRT(1.0d0 - cos_phi**2)
+
+       ! Gradient with respect to internal coordinates. Inefficient code, but readable.
+       dalpha_ds = 0.0d0
+       DO i = 0, 3
+          DO j = 0, 3
+             DO k = 0, 3
+                IF (i + j + k < 3) THEN
+                   IF (i > 0) dalpha_ds(1, :) = dalpha_ds(1, :) + a_ijk(:, i, j, k) * i * s1**(i-1) * s2**j * s3**k
+                   IF (j > 0) dalpha_ds(2, :) = dalpha_ds(2, :) + a_ijk(:, i, j, k) * j * s1**i * s2**(j-1) * s3**k
+                   IF (k > 0) dalpha_ds(3, :) = dalpha_ds(3, :) + a_ijk(:, i, j, k) * k * s1**i * s2**j * s3**(k-1)
+                ENDIF 
+             ENDDO
+          ENDDO
+       ENDDO
+
+       ! Gradient with respect to Cartesian coordinates:
+       ! Elements are dalpha_dr_diag_mol(i, j, k) = (ds_l / dr_ij) * (dalpha_k / ds_l), 
+       ! where r_ij corresponds to j-th coordinate of i-th atom, alpha_k is k-th component of the polarizability tensor's diagonal,
+       ! and s_l are s1, s2, and s3 coordinates (over which we sum).
+       !Oxygen coordinates.
+       dalpha_dr_diag_mol(1, :, :) =   outer((r1 + r2) / sqrt2, dalpha_ds(1, :)) &
+                                     + outer((MATMUL(tnsr1, r2) + MATMUL(tnsr2, r1)) * dacos_dx, dalpha_ds(2, :)) &
+                                     + outer((r2 - r1) / sqrt2, dalpha_ds(3, :))
+       !Hydrogen 1 coordinates.
+       dalpha_dr_diag_mol(2, :, :) = - outer(r1 / sqrt2, dalpha_ds(1, :)) &
+                                     - outer(MATMUL(tnsr1, r2) * dacos_dx, dalpha_ds(2, :)) &
+                                     + outer(r1 / sqrt2, dalpha_ds(3, :))
+       !Hydrogen 2 coordinates.
+       dalpha_dr_diag_mol(3, :, :) = - outer(r2 / sqrt2, dalpha_ds(1, :)) &
+                                     - outer(MATMUL(tnsr2, r1) * dacos_dx, dalpha_ds(2, :)) &
+                                     - outer(r2 / sqrt2, dalpha_ds(3, :))
+       dalpha_dr_diag_mol = dalpha_dr_diag_mol * angtoau**2 ! Convert to atomic units.
+    ENDIF
 
   END SUBROUTINE calc_alpha_Avila
 
@@ -302,19 +346,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE rotate_alpha
 
-  ! Takes a general vector x and computes its norm (x_norm) and normalized vector x_vec = x / x_norm.
-  SUBROUTINE normalized_vec_norm(x, x_vec, x_norm)
-
-    DOUBLE PRECISION, INTENT(IN) :: x(:)
-    DOUBLE PRECISION, INTENT(OUT) :: x_vec(:), x_norm
-
-    x_norm = NORM2(x)
-    x_vec = x / x_norm
-
-  END SUBROUTINE normalized_vec_norm
-
-  ! Computes matrix (Id - outer(vec, vec)) / norm, which appears in the
-  ! computation of the gradient of the rotation matrix.
+  ! Computes matrix (Id - outer(vec, vec)) / norm, which appears in the computation of the gradient of the rotation matrix.
   FUNCTION rot_grad_tnsr(vec, norm) RESULT(tnsr)
 
     DOUBLE PRECISION, INTENT(IN) :: vec(3), norm
@@ -750,6 +782,17 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     ABC = MATMUL(A, MATMUL(B, C))
 
   END FUNCTION multiply_matrices
+
+  ! Takes a general vector x and computes its norm (x_norm) and normalized vector x_vec = x / x_norm.
+  SUBROUTINE normalized_vec_norm(x, x_vec, x_norm)
+
+    DOUBLE PRECISION, INTENT(IN) :: x(:)
+    DOUBLE PRECISION, INTENT(OUT) :: x_vec(:), x_norm
+
+    x_norm = NORM2(x)
+    x_vec = x / x_norm
+
+  END SUBROUTINE normalized_vec_norm
 
 END SUBROUTINE h2o_dipole
 
