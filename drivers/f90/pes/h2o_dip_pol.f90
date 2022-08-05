@@ -35,23 +35,40 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   IMPLICIT NONE
   
-  DOUBLE PRECISION, INTENT(IN) :: box(3)
-  INTEGER, INTENT(IN) :: nat
-  DOUBLE PRECISION, INTENT(IN) :: atoms(nat, 3)
-  LOGICAL, INTENT(IN) :: compute_der
-  DOUBLE PRECISION, INTENT(INOUT) :: dip(3)
-  DOUBLE PRECISION, INTENT(INOUT) :: dip_der(nat, 3)
-  DOUBLE PRECISION, INTENT(INOUT) :: pol(3, 3)
+  !====================================================
+  ! Input arguments and output values.
+  !====================================================
+  DOUBLE PRECISION, INTENT(IN) :: box(3)              !Lattice constants for PBC.
+  INTEGER, INTENT(IN) :: nat                          !Number of atoms.
+  DOUBLE PRECISION, INTENT(IN) :: atoms(nat, 3)       !Atom coordinates.
+  LOGICAL, INTENT(IN) :: compute_der                  !Switch for computing dipole gradients.
+  DOUBLE PRECISION, INTENT(INOUT) :: dip(3)           !Output dipole.
+  DOUBLE PRECISION, INTENT(INOUT) :: dip_der(nat, 3)  !Output dipole gradient.
+  DOUBLE PRECISION, INTENT(INOUT) :: pol(3, 3)        !Output polarizability.
+  !====================================================
 
+  !====================================================
+  ! Useful constants.
+  !====================================================
   DOUBLE PRECISION, PARAMETER :: pi = DACOS(-1.0d0), twopi = 2 * pi, sqrtpi = SQRT(pi), sqrt2 = SQRT(2.0d0)
   DOUBLE COMPLEX, PARAMETER :: IU = CMPLX(0.0d0, 1.0d0, KIND=16)
   DOUBLE PRECISION, PARAMETER :: angtoau = 1.88973d0
- 
-  DOUBLE PRECISION, PARAMETER :: qm = -1.1128d0
-  DOUBLE PRECISION, PARAMETER :: qh = - qm / 2
+  !====================================================
+
+  !========================================================================================
+  ! Parameters related to the TIP4P force fields, needed for computing the M site.
+  !========================================================================================
+  DOUBLE PRECISION, PARAMETER :: qm = -1.1128d0 ! Charge of M site.
+  DOUBLE PRECISION, PARAMETER :: qh = - qm / 2  ! Charge of H atom.
   DOUBLE PRECISION, PARAMETER :: charges(3) = (/ qm, qh, qh /) !(n_charged_atom_per_mol)
-  DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam)
-  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * angtoau**3 !Isotropic polarizability from Hamm's paper.
+  DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam) ! Parameter controlling M site position.
+  !========================================================================================
+
+  !================================================
+  ! Polarizability-related parameters.
+  !================================================
+  !Isotropic polarizability from Hamm's paper.
+  DOUBLE PRECISION, PARAMETER :: a_iso = 1.47d0 * angtoau**3
 
   !Anisotropic polarizability from Hamm's paper.
   DOUBLE PRECISION, PARAMETER :: a_aniso(3) = (/ 1.626d0, 1.495d0, 1.286d0 /) * angtoau**3
@@ -129,55 +146,104 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     0.00000d0, 0.00000d0, 0.00000d0, & !233
     0.00000d0, 0.00000d0, 0.00000d0  & !333
     /), (/3, 4, 4, 4/) ) * 0.89875517923d0 
+  !================================================
 
+  !================================================
+  ! Useful arrays needed globally.
+  !================================================
   INTEGER :: nmol
 
-  DOUBLE PRECISION :: alpha(nat/3, 3, 3) !(nmol, xyz, xyz)
+  DOUBLE PRECISION :: alpha(nat/3, 3, 3) !Array of permanent molecular polarizabilities. (nmol, xyz, xyz)
   DOUBLE PRECISION :: atoms_charged(nat, 3) !List of atoms, with O replaced by M site ('charged atoms'). (natoms, xyz)
-  DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
   DOUBLE PRECISION :: dip_der_full(nat, 3, 3) !Gradient of dipole moment. (natoms, xyz, xyz)
-  DOUBLE PRECISION :: dalpha_dr(nat, 3, 3, 3) !Gradient of molecular polarizabilities. (natoms, xyz, xyz, xyz)
+  DOUBLE PRECISION :: dalpha_dr(nat, 3, 3, 3) !Gradient of permanent molecular polarizabilities. (natoms, xyz, xyz, xyz)
 
-  DOUBLE PRECISION :: dip_ind(3) !(nmol, xyz)
-  DOUBLE PRECISION :: dip_ind_der(nat, 3, 3) !(nmol, nat, xyz, xyz)
-  DOUBLE PRECISION :: pol_ind(3, 3) !(nmol, nmol, xyz, xyz)
-  INTEGER :: i, k
+  DOUBLE PRECISION :: dip_ind(3) !Induced dipole moment. (nmol, xyz)
+  DOUBLE PRECISION :: dip_ind_der(nat, 3, 3) !Gradient of the induced dipole moment. (nmol, nat, xyz, xyz)
+  DOUBLE PRECISION :: pol_ind(3, 3) !Induced polarizability. (nmol, nmol, xyz, xyz)
   
   !Number of molecules.
   nmol = nat / 3
 
-  !Molecular polarizability.
+  !---------------------------------------------------
+  ! Molecular polarizability.
+  !---------------------------------------------------
+  ! Computes molecular polarizability in the molecular frame (or sets it to constant for rigid models)
+  ! and rotates it to the lab frame. Performed on each molecule.
+  ! Also evaluates the analytical gradient of the polarizability, which is needed for the induced dipole gradients.
+  !---------------------------------------------------
   CALL calc_alpha
+  !---------------------------------------------------
   
-  !Charged atoms (Site M instead of oxygen) and oxygen atoms stored separately.
-  atoms_charged = atoms
-  DO i=1, nat, 3
-     !Apply PBC to hydrogens so that the molecule is not split over the box.
-     !Probably not needed if we do not expect PBC applied to atoms before passed from i-pi.
-     DO k = 1, 2
-        atoms_charged(i + k, :) = atoms(i + k, :) - NINT((atoms(i + k, :) - atoms(i, :))/ box(:)) * box(:) 
-     ENDDO
-     !Compute M site position.
-     atoms_charged(i, :) = gam * atoms(i, :) + gam2 * (atoms_charged(i+1, :) + atoms_charged(i+2, :))
-     !Oxygen atoms.
-     ro((i-1)/3 + 1, :) = atoms(i, :)
-  ENDDO
+  !-----------------------------------------------------------------------------------------------------
+  ! Charged atoms with site M instead of oxygen, as defined by TIP4P force field.
+  !-----------------------------------------------------------------------------------------------------
+  CALL tip4p_particles
+  !------------------------------------------------------------------------------------------------------
   
-  !Coordinate-dependent quantities: dip_ind and dip_ind_der. This is where we worry about Ewald summation.
+  !------------------------------------------------------------------------------------------------------
+  ! Coordinate-dependent induced dipoles, derivatives of dipoles, and polarizabilities 
+  ! (dip_ind, dip_ind_der, and pol_ind).
+  ! This is where we perform Ewald summation.
+  !------------------------------------------------------------------------------------------------------
   CALL calc_induced_part(dip_ind, dip_ind_der, pol_ind)
+  !------------------------------------------------------------------------------------------------------
 
-  !Calculate total dipole moment. Using scaled charges for permanent dipole according to Hamm.
+  !------------------------------------------------------------------------------------------------------
+  ! Calculate total dipole moment. Using scaled charges for permanent dipole according to Hamm.
+  !------------------------------------------------------------------------------------------------------
   dip(:) = calc_dipole(atoms_charged, charges / 1.3d0, dip_ind)
+  !------------------------------------------------------------------------------------------------------
+
+  !------------------------------------------------------------------------------------------------------
+  !Calculate total dipole moment derivative. Using scaled charges for permanent dipole according to Hamm.
+  !------------------------------------------------------------------------------------------------------
   IF (compute_der) THEN
      dip_der_full(:, : ,:) = calc_dipole_derivative(charges / 1.3d0, dip_ind_der)
   ELSE
      dip_der_full(:, :, :) = 0.0d0
   ENDIF
+  ! Only z-component of the dipole gradient is used (arbitrary choice).
   dip_der = dip_der_full(:, 3, :)
+  !------------------------------------------------------------------------------------------------------
+
+  !--------------------------------------
+  !Calculate total polarizability.
+  !--------------------------------------
   pol = calc_polarizability(pol_ind)
+  !--------------------------------------
 
  CONTAINS
 
+  !************************************************************************************************************
+  ! Charged atom positions as defined for TIP4P force field: two H atoms and the M site that 
+  ! is computed below from O and H coordinates.
+  !************************************************************************************************************
+  SUBROUTINE tip4p_particles
+
+    INTEGER :: i, j
+    
+    atoms_charged = atoms
+    DO i=1, nat, 3
+       !Apply PBC to hydrogens so that the molecule is not split over the box.
+       !Probably not needed if we do not expect PBC applied to atoms before passed from i-pi.
+       DO j = 1, 2
+          atoms_charged(i + j, :) = atoms(i + j, :) - NINT((atoms(i + j, :) - atoms(i, :))/ box(:)) * box(:) 
+       ENDDO
+       !Compute M site position.
+       atoms_charged(i, :) = gam * atoms(i, :) + gam2 * (atoms_charged(i+1, :) + atoms_charged(i+2, :))
+    ENDDO
+
+  END SUBROUTINE tip4p_particles
+  !************************************************************************************************************
+  !************************************************************************************************************
+
+  !************************************************************************************************************
+  ! Computation of permanent molecular polarizabilities, first in the molecular frame and then rotated 
+  ! into the lab frame. 
+  ! Other procedures that are needed are right below calc_alpha and are enclosed with comment lines to 
+  ! separate from other routines.
+  !************************************************************************************************************
   SUBROUTINE calc_alpha
 
     INTEGER :: i, iatom
@@ -190,6 +256,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE calc_alpha
 
+  !************************************************************************************************************
+  ! Compute molecular polarizability in the molecular frame. Several options
+  ! available: isotropic rigid, anisotropic rigid, and anisotropic flexible. For
+  ! the flexible polarizability, see routine below named calc_alpha_Avila.
+  !************************************************************************************************************
   SUBROUTINE calc_alpha_mol(alpha_mol, dalpha_dr_mol, atoms_mol)
 
     DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
@@ -210,6 +281,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE calc_alpha_mol
 
+  !************************************************************************************************************
+  ! Molecular polarizability in the molecular frame from G. Avila, JCP 122, 144310 (2005).
+  ! Analytical gradient available, needed for computing the gradient of the induced dipole moment.
+  !************************************************************************************************************
   SUBROUTINE calc_alpha_Avila(alpha_diag_mol, dalpha_dr_diag_mol, atoms_mol)
 
     DOUBLE PRECISION, INTENT(INOUT) :: alpha_diag_mol(3), dalpha_dr_diag_mol(3, 3, 3)
@@ -287,11 +362,14 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE calc_alpha_Avila
 
+  !************************************************************************************************************
+  ! Rotation of all permanent molecular polarizabilities into the lab frame.
   ! Definition of axes from G. Avila, JCP 122, 144310 (2005).
   ! y is the axis that bisects the H-O-H angle and molecules lies in the xy plane.
   ! Following this definition, x and y are computed from r1 = normalized(rO - rH1) and r2 = normalized(rO-rH2) as
   ! x = normalized(r1 -r2), y = normalized(r1+r2).
   ! z is perpendicular to the plane of the molecule and can be computed as the cross product of x and y.
+  !************************************************************************************************************
   SUBROUTINE rotate_alpha(alpha_mol, dalpha_dr_mol, atoms_mol)
 
     DOUBLE PRECISION, INTENT(INOUT) :: alpha_mol(3, 3), dalpha_dr_mol(3, 3, 3, 3)
@@ -362,12 +440,26 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     tnsr = tnsr / norm
 
   END FUNCTION rot_grad_tnsr
+  !************************************************************************************************************
+  !************************************************************************************************************
 
+  !************************************************************************************************************
+  ! Induced dipoles, dipole gradients, and polarizabilities. We use the first-order (not self-consistently solved) 
+  ! dipole-induced dipole model, accounting for the intermolecular (two-body) interactions.
+  ! This computation involves multiple routines that are all gathered below and separated from the rest 
+  ! of the code by comment lines.
+  !************************************************************************************************************
   SUBROUTINE calc_induced_part(dip_ind, dip_ind_der, pol_ind)
 
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
     DOUBLE PRECISION :: a, rcut
+    DOUBLE PRECISION :: ro(nat/3, 3) !List of O atoms. (nmol, xyz)
+
+    !-------------------------------------------------------
+    ! It is practical to have a list of O atom coordinates.
+    !-------------------------------------------------------
+    ro(:, :) = atoms(1:nat:3, :)
 
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
@@ -387,6 +479,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE calc_induced_part
 
+  !************************************************************************************************************
+  ! Short-range part, solved by direct summation in the real space.
+  !************************************************************************************************************
   SUBROUTINE short_range_ew(r, ro, a, rcut, dip_ind, dip_ind_der, pol_ind)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a, rcut 
@@ -510,6 +605,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE short_range_ew
 
+  !************************************************************************************************************
+  ! Used for simplifying the short-range Ewald code above.
+  !************************************************************************************************************
   SUBROUTINE compute_helper_vars(a, dr2, prefac, self_term, dr, dr3, a_dr, gauss_part, screen)
 
     DOUBLE PRECISION, INTENT(IN) :: a, dr2, prefac
@@ -525,6 +623,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE compute_helper_vars
 
+  !************************************************************************************************************
+  ! Screening term from the short-range Ewald summation. 
+  !************************************************************************************************************
   FUNCTION short_range_ew_screen(a_r, gauss_part, self_term) RESULT(sc)
 
     DOUBLE PRECISION :: sc
@@ -537,6 +638,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION short_range_ew_screen
 
+  !************************************************************************************************************
+  ! Standard dipole-induced dipole interaction tensor with short-range Ewald screening.
+  !************************************************************************************************************
   FUNCTION short_range_T_tnsr(r_ij, r2, r3, a_r, gauss_part, screen) RESULT(T_ij)
 
     DOUBLE PRECISION :: T_ij(3, 3)
@@ -552,6 +656,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION short_range_T_tnsr
 
+  !************************************************************************************************************
+  ! Long-range part solved by performing operations in the k-space. 
+  !************************************************************************************************************
   SUBROUTINE long_range_ew(r, ro, a, dip_ind, dip_ind_der, pol_ind)
 
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a    
@@ -640,6 +747,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END SUBROUTINE long_range_ew
 
+  !************************************************************************************************************
+  ! Derivative of induced dipole at molecule i w.r.t. coordinates of molecule j (includes self-term i==j).
+  ! This code is common to short-range and long-range Ewald components, used in both subroutines.
+  !************************************************************************************************************
   SUBROUTINE dip_ind_der_ij(dmui_drj, tnsr, k)
 
     DOUBLE PRECISION, INTENT(INOUT) :: dmui_drj(3, 3, 3)
@@ -661,7 +772,13 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     ENDIF   
 
   END SUBROUTINE dip_ind_der_ij
+  !************************************************************************************************************
+  !************************************************************************************************************
 
+  !************************************************************************************************************
+  ! Full dipole moment. One-body term is here computed only from the point
+  ! charges, but could be replaced by a more sophisticated dipole surface.
+  !************************************************************************************************************
   FUNCTION calc_dipole(atoms, charges, dip_ind)
 
     DOUBLE PRECISION, INTENT(IN) :: atoms(nat,3), charges(3), dip_ind(3)
@@ -682,7 +799,13 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     calc_dipole = calc_dipole + dip_ind
 
   END FUNCTION calc_dipole
+  !************************************************************************************************************
+  !************************************************************************************************************
 
+  !************************************************************************************************************
+  ! Full derivative of the dipole moment. One-body term is here computed only from the point
+  ! charges, but could be replaced by a more sophisticated dipole surface.
+  !************************************************************************************************************
   FUNCTION calc_dipole_derivative(charges, dip_ind_der) RESULT(dip_der)
 
     DOUBLE PRECISION, INTENT(IN) :: charges(3)
@@ -704,7 +827,13 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     dip_der = dip_der + dip_ind_der
 
   END FUNCTION calc_dipole_derivative
+  !************************************************************************************************************
+  !************************************************************************************************************
 
+  !************************************************************************************************************
+  ! Full polarizability as a sum of permanent and induced components. The
+  ! negative sign in front of pol_ind is due to the definition of the dipole tensor used in the code above.
+  !************************************************************************************************************
   FUNCTION calc_polarizability(pol_ind) RESULT(pol)
 
     DOUBLE PRECISION, INTENT(IN) :: pol_ind(3,3)
@@ -716,7 +845,17 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     pol = pol - pol_ind 
 
   END FUNCTION calc_polarizability
+  !************************************************************************************************************
+  !************************************************************************************************************
 
+  !************************************************************************************************************
+  ! Below are some helper procedures that are used in different places.
+  !************************************************************************************************************
+
+  !--------------------------------------
+  ! Evaluates array k.r_i (i = 1, n),
+  ! where k and r_i are 3-dim vectors.
+  !--------------------------------------
   FUNCTION k_dot_r(n, k, r)
 
     DOUBLE PRECISION :: k_dot_r(n)
@@ -733,6 +872,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION k_dot_r
 
+  !--------------------------------------
+  ! Outer product of two vectors.
+  ! c_ij = a_i * b_j
+  !--------------------------------------
   FUNCTION outer(a, b)
 
     DOUBLE PRECISION, INTENT(IN) :: a(3), b(3)
@@ -747,6 +890,10 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION outer
 
+  !--------------------------------------
+  ! Outer product of two complex vectors.
+  ! c_ij = a_i * b_j
+  !--------------------------------------
   FUNCTION outer_cmplx(a, b)
 
     DOUBLE COMPLEX, INTENT(IN) :: a(3), b(3)
@@ -761,6 +908,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION outer_cmplx
 
+  !--------------------------------------
+  ! Cross product of two 3-dim vectors.
+  !--------------------------------------
   FUNCTION cross_product(a, b) RESULT(c)
 
     DOUBLE PRECISION, INTENT(IN) :: a(3), b(3)
@@ -773,6 +923,9 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION cross_product
 
+  !--------------------------------------
+  ! Product of three matrices.
+  !--------------------------------------
   FUNCTION multiply_matrices(A, B, C) RESULT(ABC)
 
     DOUBLE PRECISION, INTENT(IN) :: A(3, 3), B(3, 3), C(3, 3)
@@ -783,7 +936,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
   END FUNCTION multiply_matrices
 
-  ! Takes a general vector x and computes its norm (x_norm) and normalized vector x_vec = x / x_norm.
+  !-----------------------------------------
+  ! Takes a general vector x and computes
+  ! its norm (x_norm) and normalized vector 
+  ! x_vec = x / x_norm.
+  !-----------------------------------------
   SUBROUTINE normalized_vec_norm(x, x_vec, x_norm)
 
     DOUBLE PRECISION, INTENT(IN) :: x(:)
@@ -793,6 +950,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     x_vec = x / x_norm
 
   END SUBROUTINE normalized_vec_norm
+  !************************************************************************************************************
+  !************************************************************************************************************
 
 END SUBROUTINE h2o_dipole
 
