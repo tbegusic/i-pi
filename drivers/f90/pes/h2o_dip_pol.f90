@@ -64,6 +64,15 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   DOUBLE PRECISION, PARAMETER :: gam = 0.73612d0, gam2 = 0.5d0 * (1-gam) ! Parameter controlling M site position.
   !========================================================================================
 
+  !========================================================================================
+  ! Ewald parameter specifying the degree of convergence of real and reciprocal sums.
+  ! Larger number implies longer and more accurate calculation.
+  ! In other codes, this parameter is multiplied by pi, here pi is separately
+  ! implemented in the equations (i.e., ewald_param = 1 corresponds to pi in other codes).
+  !========================================================================================
+  DOUBLE PRECISION, PARAMETER :: ewald_param = 1.0d0 ! Ewald sum parameter.
+  !========================================================================================
+
   !================================================
   ! Polarizability-related parameters.
   !================================================
@@ -275,7 +284,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     dalpha_dr_mol = 0.0d0
     CALL calc_alpha_Avila(a_Avila, da_dr, atoms_mol) !Anisotropic molecular polarizability.
     DO k = 1, 3
-       !alpha(i, k, k) = a_iso                    !Isotropic rigid molecular polarizability.
+       !alpha_mol(k, k) = a_iso                    !Isotropic rigid molecular polarizability.
        !alpha_mol(k, k) = a_aniso(k)              !Anisotropic rigid molecular polarizability.
        alpha_mol(k, k) = a_Avila(k)               !Anisotropic flexible molecular polarizability (diagonal terms).
        dalpha_dr_mol(:, :, k, k) = da_dr(:, :, k) !Gradient of the anisotropic flexible molecular polarizability (diagonal terms).
@@ -470,8 +479,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     !----------------------------------------------
     ! Parameters for Ewald (calculated only once).
     !----------------------------------------------
-    rcut = 1.3d0 * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
-    a = 1.3d0 * pi/rcut
+    rcut = ewald_param * MINVAL(box) * MIN(0.5d0,1.2d0*nat**(-1.d0/6.d0))
+    a = ewald_param * pi/rcut
 
     !----------------------------------------------
     ! Short-range part - sum over pairs.
@@ -670,17 +679,31 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION, INTENT(IN) :: r(nat, 3), ro(nmol, 3), a    
     DOUBLE PRECISION, INTENT(INOUT) :: dip_ind(3), dip_ind_der(nat, 3, 3), pol_ind(3, 3)
 
-    INTEGER :: i, l, m, iatom, latom, kx, ky, kz, kmax
-    DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, sum_alpha(3, 3) 
-    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3, 3), sk_o_times_rk(3)
+    INTEGER :: i, l, m, iatom, latom, kx, ky, kz, kmax, k
+    DOUBLE PRECISION :: b, f, f_mod, rk(3), rk_i, rk_out(3, 3), rk2, rkmax2, lat(3), q(nat), tnsr_tmp(3, 3), prefac, sum_alpha(3, 3) 
+    DOUBLE COMPLEX :: sk_i(nat), exp_ikr(nmol), sk, sk_o(3, 3), sk_o_times_rk(3), exp_ikr_i_times_sk, sk_o_times_rk_out(3, 3)
+    DOUBLE COMPLEX, ALLOCATABLE, DIMENSION(:, :, :) :: exp_ikr_charged, exp_ikr_o
 
-    kmax = INT(1.3d0*a * MAXVAL(box))
+    kmax = INT(ewald_param * a * MAXVAL(box))
     lat(:) = twopi/box(:) 
-    rkmax2 = (1.3d0*twopi * a)**2
+    rkmax2 = (ewald_param * twopi * a)**2
     b = 0.25d0/(a**2)
     f = 4.0d0 * pi / PRODUCT(box) ! 4pi / V !
     f_mod = f
     q(:) = PACK(SPREAD(charges(:), 2, nmol), .TRUE.)
+
+    ALLOCATE(exp_ikr_charged(1:nat, -kmax:kmax, 1:3), exp_ikr_o(1:nmol, -kmax: kmax, 1:3))
+
+    ! Evaluate exp(i k_i r_i) terms for i = x, y, z. 
+    ! Note: It is much faster to precompute and use in the computationally 
+    ! intensive part below than to re-evaluate the exponentials kmax^3 * nat times.
+    DO k = -kmax, kmax
+       DO i = 1, 3
+          rk_i = lat(i) * k
+          exp_ikr_charged(:, k, i) = EXP(-IU * rk_i * r(:, i))
+          exp_ikr_o(:, k, i) = EXP(IU * rk_i * ro(:, i))
+       ENDDO
+    ENDDO
 
     DO kx = 0,kmax
        IF (kx .EQ. 1) f_mod = 2.d0*f
@@ -693,9 +716,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
              IF (rk2 .LT. rkmax2 .AND. rk2 .GT. EPSILON(0.d0)) THEN
                 !Helper variables:
                 prefac = f_mod * EXP(-b*rk2) / rk2         !Prefactor common to all properties.
-                sk_i = q * EXP(-IU * k_dot_r(nat, rk, r))  !charge(i) * exp(i k r_i), where r_i are charged sites.
-                sk = SUM(sk_i)                             !Structure factor for the charged sites.
-                exp_ikr = EXP(IU * k_dot_r(nmol, rk, ro))  !exp(i k r_o), where r_o are oxygen atoms.
+                !charge(i) * exp(i k r_i), where r_i are charged sites.
+                sk_i = q * exp_ikr_charged(:, kx, 1) * exp_ikr_charged(:, ky, 2) * exp_ikr_charged(:, kz, 3)
+                sk = SUM(sk_i)                              !Structure factor for the charged sites.
+                !exp(i k r_o), where r_o are oxygen atoms.
+                exp_ikr = exp_ikr_o(:, kx, 1) * exp_ikr_o(:, ky, 2) * exp_ikr_o(:, kz, 3)
                 sk_o = 0.0d0                               !Structure factor for the oxygen atoms.
                 DO i = 1, nmol
                    sk_o = sk_o + alpha(i, :, :) * exp_ikr(i) 
@@ -713,18 +738,20 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
                 !--------------------------------------------------------------------------------------------
                 IF (compute_der) THEN
                    rk_out = prefac * outer(rk, rk)
+                   sk_o_times_rk_out = MATMUL(sk_o, rk_out)
                    DO i = 1, nmol
+                      exp_ikr_i_times_sk = exp_ikr(i) * sk
                       iatom = 3 * (i-1) + 1
                       !Sum for i-th oxygen atom.
-                      dip_ind_der(iatom, :, :) = dip_ind_der(iatom, :, :) + MATMUL(alpha(i, :, :), rk_out) * REAL(exp_ikr(i) * sk, KIND=KIND(1.0d0))
+                      dip_ind_der(iatom, :, :) = dip_ind_der(iatom, :, :) + MATMUL(alpha(i, :, :), rk_out) * REAL(exp_ikr_i_times_sk, KIND=KIND(1.0d0))
                       DO l = 1, 3
                          latom = iatom + l - 1
                          !Derivatives with respect to atom l of molecule j.
-                         tnsr_tmp = REAL(sk_i(latom) * MATMUL(sk_o, rk_out), KIND=KIND(1.0d0))
+                         tnsr_tmp = REAL(sk_i(latom) * sk_o_times_rk_out, KIND=KIND(1.0d0))
                          CALL dip_ind_der_ij(dip_ind_der(iatom : iatom + 2, :, :), tnsr_tmp, l)
                          !Contribution from the derivative of alpha.
                          DO m = 1, 3
-                            dip_ind_der(latom, m, :) = dip_ind_der(latom, m, :) + prefac * MATMUL(dalpha_dr(latom, :, m, :), rk) * AIMAG(exp_ikr(i) * sk)
+                            dip_ind_der(latom, m, :) = dip_ind_der(latom, m, :) + prefac * MATMUL(dalpha_dr(latom, :, m, :), rk) * AIMAG(exp_ikr_i_times_sk)
                          ENDDO
                       ENDDO
                    ENDDO
