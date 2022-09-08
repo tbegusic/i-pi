@@ -89,76 +89,88 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
   !All units in angstrom, last constant is 1/ (4 pi eps_0) * 10^-10.
   !Axes defined as in the original paper, with a rotation x->y, y->z, z->x.
   DOUBLE PRECISION, PARAMETER :: r_eq = 0.95843d0, phi_eq = 104.44d0 / 180 * pi ! Distance in angstrom, angle in degrees.
-  !Parameters from tables 6 and 7 of the JCP paper cited above. First three columns corresponds 
-  !to the xx, yy, zz components, and 4th column is for the xy component.
-  DOUBLE PRECISION, PARAMETER, DIMENSION(4, 0:3, 0:3, 0:3) :: a_ijk = RESHAPE( (/ &
-    1.64720d0, 1.58787d0, 1.53818d0, 0.00000d0, & !000
-    2.39394d0, 1.60710d0, 0.82863d0, 0.00000d0, & !100
-    1.99483d0, 0.61842d0, 0.08172d0, 0.00000d0, & !200
-    0.53619d0,-0.20959d0,-0.11892d0, 0.00000d0, & !300
-    0.24730d0,-0.07614d0, 0.08361d0, 0.00000d0, & !010
-    0.99680d0,-0.70521d0, 0.08557d0, 0.00000d0, & !110
-    1.62467d0,-0.35495d0, 0.06999d0, 0.00000d0, & !210
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !310
-    0.03954d0, 0.13331d0, 0.05666d0, 0.00000d0, & !020
-   -0.08290d0, 0.00892d0, 0.08190d0, 0.00000d0, & !120
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !220
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !320
-   -0.08900d0, 0.05328d0,-0.00271d0, 0.00000d0, & !030
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !130
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !230
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !330
-    0.00000d0, 0.00000d0, 0.00000d0, 1.17904d0, & !001
-    0.00000d0, 0.00000d0, 0.00000d0, 1.85559d0, & !101
-    0.00000d0, 0.00000d0, 0.00000d0, 0.62070d0, & !201
-    0.00000d0, 0.00000d0, 0.00000d0,-1.24044d0, & !301
-    0.00000d0, 0.00000d0, 0.00000d0,-0.37700d0, & !011
-    0.00000d0, 0.00000d0, 0.00000d0,-0.00202d0, & !111
-    0.00000d0, 0.00000d0, 0.00000d0, 1.40356d0, & !211
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !311
-    0.00000d0, 0.00000d0, 0.00000d0,-0.36099d0, & !021
-    0.00000d0, 0.00000d0, 0.00000d0,-0.63496d0, & !121
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !221
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !321
-    0.00000d0, 0.00000d0, 0.00000d0,-0.12823d0, & !031
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !131
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !231
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !331
-    0.89549d0, 0.71119d0,-0.04232d0, 0.00000d0, & !002
-    0.41179d0, 0.35624d0,-0.10806d0, 0.00000d0, & !102
-   -2.27559d0,-1.25979d0,-0.48361d0, 0.00000d0, & !202
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !302
-    0.41179d0,-1.08201d0,-0.06926d0, 0.00000d0, & !012
-    3.29320d0, 0.01374d0,-0.09119d0, 0.00000d0, & !112
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !212
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !312
-   -0.20222d0, 0.34644d0, 0.12995d0, 0.00000d0, & !022
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !122
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !222
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !322
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !032
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !132
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !232
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !332
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00698d0, & !003
-    0.00000d0, 0.00000d0, 0.00000d0,-0.64252d0, & !103
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !203
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !303
-    0.00000d0, 0.00000d0, 0.00000d0, 0.53070d0, & !013
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !113
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !213
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !313
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !023
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !123
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !223
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !323
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !033
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !133
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0, & !233
-    0.00000d0, 0.00000d0, 0.00000d0, 0.00000d0 & !333
-    /), (/4, 4, 4, 4/) ) * 0.89875517923d0 
-  !================================================
-
+  !Parameters from tables 6 and 7 of the JCP paper cited above. a_diag corresponds 
+  !to the xx, yy, zz components, and a_off_diag is for the xy component.
+  !a_index_diag and a_index_off_diag are the exponents for the s1, s2, and s3 variables (i, j, k in tables 6 and 7).
+  INTEGER, PARAMETER :: ncoeff_diag = 22, ncoeff_off_diag = 13 ! Number of coefficients for the diagonal and off-diagonal terms.
+  DOUBLE PRECISION, PARAMETER, DIMENSION(3, ncoeff_diag) :: a_diag = RESHAPE( (/ &
+    1.64720d0, 1.58787d0, 1.53818d0, & !000
+    0.24730d0,-0.07614d0, 0.08361d0, & !010
+    2.39394d0, 1.60710d0, 0.82863d0, & !100
+    0.89549d0, 0.71119d0,-0.04232d0, & !002
+    0.03954d0, 0.13331d0, 0.05666d0, & !020
+    1.99483d0, 0.61842d0, 0.08172d0, & !200
+    0.99680d0,-0.70521d0, 0.08557d0, & !110
+   -0.08900d0, 0.05328d0,-0.00271d0, & !030
+    0.53619d0,-0.20959d0,-0.11892d0, & !300
+    0.41179d0,-1.08201d0,-0.06926d0, & !012
+    0.41179d0, 0.35624d0,-0.10806d0, & !102
+   -0.08290d0, 0.00892d0, 0.08190d0, & !120
+    1.62467d0,-0.35495d0, 0.06999d0, & !210
+    0.04290d0,-0.22179d0,-0.05890d0, & !004
+   -0.02203d0,-0.03182d0,-0.00800d0, & !040
+   -0.62916d0,-0.51709d0,-0.11111d0, & !400
+   -0.20222d0, 0.34644d0, 0.12995d0, & !022
+    3.29320d0, 0.01374d0,-0.09119d0, & !112
+   -2.27559d0,-1.25979d0,-0.48361d0, & !202
+    0.15971d0,-0.03825d0,-0.03088d0, & !220
+    1.20526d0, 0.18326d0,-0.09411d0, & !310
+   -0.18405d0, 0.17426d0, 0.05992d0  & !130
+    /), (/3, ncoeff_diag/) ) * 0.89875517923d0 
+  INTEGER, PARAMETER, DIMENSION(3, ncoeff_diag) :: a_index_diag = RESHAPE( (/ &
+    0, 0, 0, &
+    0, 1, 0, &
+    1, 0, 0, &
+    0, 0, 2, &
+    0, 2, 0, &
+    2, 0, 0, &
+    1, 1, 0, &
+    0, 3, 0, &
+    3, 0, 0, &
+    0, 1, 2, &
+    1, 0, 2, &
+    1, 2, 0, &
+    2, 1, 0, &
+    0, 0, 4, &
+    0, 4, 0, &
+    4, 0, 0, &
+    0, 2, 2, &
+    1, 1, 2, &
+    2, 0, 2, &
+    2, 2, 0, &
+    3, 1, 0, &
+    1, 3, 0  &
+    /), (/3, ncoeff_diag/) )
+  DOUBLE PRECISION, PARAMETER, DIMENSION(ncoeff_off_diag) :: a_off_diag = (/ &
+     1.17904d0, & !001
+    -0.37700d0, & !011
+     1.85559d0, & !101
+     0.00698d0, & !003
+    -0.36099d0, & !021
+    -0.00202d0, & !111
+     0.62070d0, & !201
+     0.53070d0, & !013
+    -0.64252d0, & !103
+    -0.63496d0, & !121
+    -0.12823d0, & !031
+     1.40356d0, & !211
+    -1.24044d0  & !301
+    /) * 0.89875517923d0 
+  INTEGER, PARAMETER, DIMENSION(3, ncoeff_off_diag) :: a_index_off_diag = RESHAPE( (/ &
+    0, 0, 1, &
+    0, 1, 1, &
+    1, 0, 1, &
+    0, 0, 3, &
+    0, 2, 1, &
+    1, 1, 1, &
+    2, 0, 1, &
+    0, 1, 3, &
+    1, 0, 3, &
+    1, 2, 1, &
+    0, 3, 1, &
+    2, 1, 1, &
+    3, 0, 1  &
+    /), (/3, ncoeff_off_diag/) )
   !================================================
   ! Useful arrays needed globally.
   !================================================
@@ -309,7 +321,7 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     DOUBLE PRECISION :: delta_r1, delta_r2, cos_phi, phi
     DOUBLE PRECISION :: dalpha_ds(3, 4), dacos_dx
     DOUBLE PRECISION :: s1, s2, s3
-    INTEGER :: i, j, k
+    INTEGER :: i, j, k, l
 
     CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(2,:), r1, r1_norm)
     CALL normalized_vec_norm(atoms_mol(1,:) - atoms_mol(3,:), r2, r2_norm)
@@ -325,14 +337,11 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
     ! Inefficient evaluation of the polynomial, but clean code. Could be improved further for efficiency.
     a_mol = 0.0d0
-    DO i = 0, 3
-       DO j = 0, 3
-          DO k = 0, 3
-             IF (i + j + k < 3) THEN
-                a_mol = a_mol + a_ijk(:, i, j, k) * s1**i * s2**j * s3**k
-             ENDIF 
-          ENDDO
-       ENDDO
+    DO l = 1, ncoeff_diag
+       a_mol(1:3) = a_mol(1:3) + a_diag(:, l) * s1**a_index_diag(1, l) * s2**a_index_diag(2, l) * s3**a_index_diag(3, l)
+    ENDDO
+    DO l = 1, ncoeff_off_diag
+       a_mol(4) = a_mol(4) + a_off_diag(l) * s1**a_index_off_diag(1, l) * s2**a_index_off_diag(2, l) * s3**a_index_off_diag(3, l)
     ENDDO
     a_mol = a_mol * angtoau**3 ! Convert back to atomic units.
 
@@ -344,16 +353,17 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
 
        ! Gradient with respect to internal coordinates. Inefficient code, but readable.
        dalpha_ds = 0.0d0
-       DO i = 0, 3
-          DO j = 0, 3
-             DO k = 0, 3
-                IF (i + j + k < 3) THEN
-                   IF (i > 0) dalpha_ds(1, :) = dalpha_ds(1, :) + a_ijk(:, i, j, k) * i * s1**(i-1) * s2**j * s3**k
-                   IF (j > 0) dalpha_ds(2, :) = dalpha_ds(2, :) + a_ijk(:, i, j, k) * j * s1**i * s2**(j-1) * s3**k
-                   IF (k > 0) dalpha_ds(3, :) = dalpha_ds(3, :) + a_ijk(:, i, j, k) * k * s1**i * s2**j * s3**(k-1)
-                ENDIF 
-             ENDDO
-          ENDDO
+       DO l = 1, ncoeff_diag
+          i = a_index_diag(1, l); j = a_index_diag(2, l); k = a_index_diag(3, l);
+          IF (i > 0) dalpha_ds(1, 1:3) = dalpha_ds(1, 1:3) + a_diag(:, l) * i * s1**(i-1) * s2**j * s3**k
+          IF (j > 0) dalpha_ds(2, 1:3) = dalpha_ds(2, 1:3) + a_diag(:, l) * j * s1**i * s2**(j-1) * s3**k
+          IF (k > 0) dalpha_ds(3, 1:3) = dalpha_ds(3, 1:3) + a_diag(:, l) * k * s1**i * s2**j * s3**(k-1)
+       ENDDO
+       DO l = 1, ncoeff_off_diag
+          i = a_index_off_diag(1, l); j = a_index_off_diag(2, l); k = a_index_off_diag(3, l);
+          IF (i > 0) dalpha_ds(1, 4) = dalpha_ds(1, 4) + a_off_diag(l) * i * s1**(i-1) * s2**j * s3**k
+          IF (j > 0) dalpha_ds(2, 4) = dalpha_ds(2, 4) + a_off_diag(l) * j * s1**i * s2**(j-1) * s3**k
+          IF (k > 0) dalpha_ds(3, 4) = dalpha_ds(3, 4) + a_off_diag(l) * k * s1**i * s2**j * s3**(k-1)
        ENDDO
 
        ! Gradient with respect to Cartesian coordinates:
