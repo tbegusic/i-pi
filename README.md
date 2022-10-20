@@ -3,8 +3,8 @@
 This is a modification of the original i-pi code that can compute equilibrium-nonequilibrium response function associated with several types of two-time, two-dimensional spectroscopies.
 The instructions below assume that you know how to use i-pi. Its documentation and tutorials can be found at https://github.com/i-pi/i-pi.
 Credit for nearly all parts of this code go to the developers of i-pi. Main modifications specific to this version are in the drivers/driver.f90 file and in two new files:
-* drivers/pes/h2o\_dip\_pol.f90
-* tools/py/eq\_neq\_spectra.py
+* drivers/pes/h2o\_dip\_pol.f90 - implements dipoles and polarizabilities for water according to a truncated dipole-induced-dipole model
+* tools/py/eq\_neq\_spectra.py - implements equilibrium-nonequilibrium dynamics
 
 ## Installation
 
