@@ -29,3 +29,15 @@ A detailed example is provided in examples/tools/eq\_neq\_spectra. In short, the
 i-pi-eq_neq_spectra input.xml input_spec.xml > output &
 ```
 where input.xml is the standard i-pi input and input\_spec.xml is the input that defines parameters for nonequilibrium trajectories. See example for details of the inputs.
+
+## Background
+
+The goal is to compute two-time response functions related to different types of two-dimensional infrared-Raman spectroscopies. For example, the infrared-infrared-Raman (IIR) spectrum would be computed from
+$$R(t_1, t_2) = \langle [\Pi_{+}(t_2) - \Pi_{-}(t_2)] \dot{\mu}(-t_1) \rangle,$$
+where $\mu$ is the dipole moment and $\Pi$ the polarizability, $\langle \cdot \rangle$ denotes a classical thermal average, and $\Pi_{\pm}$ corresponds to nonequilibrium trajectories that are initiated with an initially modified momentum $p_{\pm, 0} = p_0 \pm (\varepsilon/2) \mu^{\prime}$. $\varepsilon$ controls the strength of the perturbation and $\mu^{\prime}$ is the gradient of the dipole moment evaluated at the initial position. To evaluate this response function, we must propagate equilibrium and nonequilibrium dynamics as shown in the scheme below. i-pi-eq_neq_spectra code allows exactly that and can be further combined with the [encorr](https://github.com/tbegusic/encorr) code for computing the response function.
+
+<p align="center">
+<img src="Scheme.png"  width="60%">
+</p>
+
+Specifically, in i-pi-eq_neq_spectra, we first propagate the equilibrium trajectory fully (total time specified in the input.xml file) and then go back to each checkpoint file created along this trajectory and initiate a new nonequilibrium trajectory from it (propagated for a total time specified in the input_spec.xml file). For time steps at which the checkpoint file is created, one must also output the derivative of the dipole moment, so that the modified momentum can be computed.
