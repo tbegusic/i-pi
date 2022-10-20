@@ -33,7 +33,7 @@ where input.xml is the standard i-pi input and input\_spec.xml is the input that
 ## Background
 
 The goal is to compute two-time response functions related to different types of two-dimensional infrared-Raman spectroscopies. For example, the infrared-infrared-Raman (IIR) spectrum would be computed from
-$$R(t_1, t_2) = \langle [\Pi_{+}(t_2) - \Pi_{-}(t_2)] \dot{\mu}(-t_1) \rangle,$$
+$$R(t_1, t_2) = \frac{\beta}{\varepsilon}\langle [\Pi_{+}(t_2) - \Pi_{-}(t_2)] \dot{\mu}(-t_1) \rangle,$$
 where $\mu$ is the dipole moment and $\Pi$ the polarizability, $\langle \cdot \rangle$ denotes a classical thermal average, and $\Pi_{\pm}$ corresponds to nonequilibrium trajectories that are initiated with an initially modified momentum $p_{\pm, 0} = p_0 \pm (\varepsilon/2) \mu^{\prime}$. $\varepsilon$ controls the strength of the perturbation and $\mu^{\prime}$ is the gradient of the dipole moment evaluated at the initial position. To evaluate this response function, we must propagate equilibrium and nonequilibrium dynamics as shown in the scheme below. i-pi-eq_neq_spectra code allows exactly that and can be further combined with the [encorr](https://github.com/tbegusic/encorr) code for computing the response function.
 
 <p align="center">
