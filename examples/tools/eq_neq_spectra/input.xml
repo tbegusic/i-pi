@@ -1,0 +1,45 @@
+<!--This is mostly a standard i-pi input. We highlight the entries that are important for eq_neq_spectra.-->
+<simulation verbosity='low'>
+  <output prefix='simulation'>
+    <!--Properties and trajectory information (other than dip, dip_der, and pol) are not needed and will be printed out only during equilibrium dynamics.-->
+    <properties stride='1' filename='out'>  [ step, time{picosecond}, conserved, temperature{kelvin}, kinetic_cv, potential, pressure_cv{megapascal} ] </properties>
+    <trajectory filename='pos' stride='1' format='xyz'> positions </trajectory>
+    <!--Checkpoint files should be printed out with the same stride as dipole derivatives. This stride defines how often the nonequilibrium trajectories are launched.-->
+    <checkpoint stride='20' filename='chk' overwrite='false'/>
+    <!--Dipole and polarizability will be printed to the same file during equilibrium and nonequilibrium dynamics. These properties are passed as 'extras' from the i-pi-driver if option h2o_dip_pol is used.-->
+    <trajectory filename='dip' stride='4' extra_type='dipole'> extras </trajectory>
+    <trajectory filename='dip_der' stride='20' extra_type='dipole_derivative'> extras </trajectory>    
+    <trajectory filename='pol' stride='4' extra_type='polarizability'> extras </trajectory>
+  </output>
+  <!--Defines the number of equilibrium dynamics steps.-->
+  <total_steps>100</total_steps>
+  <prng>
+    <seed>32345</seed>
+  </prng>
+  <!--Socket for obtaining forces and energies.-->
+  <ffsocket name="lammps" mode="unix" pbc="true">
+    <address> water </address> <latency> 0.0001 </latency>
+  </ffsocket>
+  <!--Socket for obtaining dipole moments, their derivatives, and polarizabilities. It also passes zero force and zero energy, so does not affect dynamics in any way.-->
+  <ffsocket name='dipole' mode='unix' pbc="false">
+    <address>dipole</address> <latency> 0.0001 </latency>
+  </ffsocket>
+  <system>
+    <initialize nbeads="1">
+      <file mode='chk'> init.chk </file>
+    </initialize>
+    <!--Indicates that both forcefields should be invoked.-->
+    <forces>
+      <force forcefield='lammps'> </force>
+      <force forcefield='dipole'> </force>
+    </forces>
+    <motion mode='dynamics'>
+      <dynamics mode='nve' splitting="baoab">
+        <timestep units='femtosecond'> 0.5 </timestep>
+      </dynamics>
+    </motion>
+    <ensemble>
+      <temperature units='kelvin'> 300 </temperature>
+    </ensemble>
+  </system>
+</simulation>

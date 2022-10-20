@@ -6,7 +6,7 @@
 ! Date: 03 April 2022
 ! Description: Simple test program to call stand-alone
 !              Implements water dipole and polarizability 
-!              functions for qTIP4P model following 
+!              functions for qTIP4P/f model similar to 
 !              P. Hamm, J. Chem. Phys. 141, 184201 (2014).
 !
 ! NOTES:
@@ -171,6 +171,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
     2, 1, 1, &
     3, 0, 1  &
     /), (/3, ncoeff_off_diag/) )
+  !================================================
+
   !================================================
   ! Useful arrays needed globally.
   !================================================
@@ -837,8 +839,8 @@ SUBROUTINE h2o_dipole(box, nat, atoms, compute_der, dip, dip_der, pol)
        DO k = 1, 3
           calc_dipole(:) = calc_dipole(:) + charges(k) * atoms(iatom + k, :) 
        ENDDO
-       !Induced dipoles from electrostatic interaction with charges on other water molecules.
     ENDDO
+    !Induced dipoles from electrostatic interaction with charges on other water molecules.
     calc_dipole = calc_dipole + dip_ind
 
   END FUNCTION calc_dipole

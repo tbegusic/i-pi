@@ -1,0 +1,7 @@
+<spec>
+<!--Number of nonequilibrium dynamics steps, which also sets (in encorr) the maximum t1 and t2 times for the response function.-->
+<corr_steps>20</corr_steps>
+<!--Epsilon controls the strength of perturbation by external field.-->
+<epsilon>0.1</epsilon>
+<!--Other options can be added that are useful for encorr code, but are not used by the i-pi_eq_neq_spectra tool.-->
+</spec>
